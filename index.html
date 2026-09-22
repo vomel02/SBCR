@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SBR Reactor — Graph Always Updates + Lighter Colors</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
+body { background: #c8c8c8; padding: 8px; overflow: hidden; height: 100vh; }
+h1 { text-align: center; color: #0044cc; margin-bottom: 6px; font-size: 18px; }
+.container { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; height: calc(100vh - 36px); }
+.panel { background: #dcdcdc; border: 2px solid #aaa; border-radius: 6px; padding: 8px; box-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
+.top-grid { display: grid; grid-template-columns: 200px 1fr 160px; gap: 8px; width: 100%; }
+.bottom-row { display: flex; gap: 8px; width: 100%; flex: 1; min-height: 0; }
+
+/* === GAUGE === */
+.gauge-container { width: 200px; height: 200px; background: #fff; border-radius: 4px; }
+.gauge-canvas { width: 100%; height: 100%; display: block; }
+
+/* === CONTROLS === */
+.controls { min-width: 360px; }
+.sequence-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px; }
+.sequence-table th, .sequence-table td { border: 1px solid #888; padding: 2px 4px; text-align: center; }
+.sequence-table th { background: #b0b0b0; font-size: 11px; }
+.active-sequence { background: #90ee90 !important; font-weight: bold; }
+.timer-cell { font-weight: bold; color: #c00; min-width: 50px; font-family: monospace; font-size: 12px; }
+.btn-group { display: flex; gap: 4px; margin: 4px 0; flex-wrap: wrap; }
+button { padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 11px; }
+.btn-run { background: #00cc00; color: white; }
+.btn-pause { background: #ff6600; color: white; }
+.btn-reset { background: #666; color: white; }
+.btn-download { background: #0066cc; color: white; }
+button:hover { transform: scale(1.05); }
+.controls-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; font-size: 11px; }
+input[type="number"] { width: 45px; padding: 2px; text-align: center; border: 1px solid #888; border-radius: 3px; font-size: 11px; }
+.toggle-switch { width: 40px; height: 20px; background: #888; border-radius: 10px; position: relative; cursor: pointer; transition: background 0.3s; }
+.toggle-switch.on { background: #00cc00; }
+.toggle-switch::after { content: ''; position: absolute; width: 16px; height: 16px; background: white; border-radius: 50%; top: 2px; left: 2px; transition: transform 0.3s; }
+.toggle-switch.on::after { transform: translateX(20px); }
+.status-indicator { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.light { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #333; display: inline-block; }
+.light.green { background: #00ff00; box-shadow: 0 0 6px #00ff00; }
+.light.yellow { background: #ffff00; box-shadow: 0 0 6px #ffff00; }
+.controller-status { font-size: 10px; line-height: 1.5; padding: 4px; background: #e8e8e8; border-radius: 3px; margin-top: 4px; }
+
+/* === TANK — LIGHTER INDUSTRIAL WASTEWATER COLORS === */
+.tank-panel { text-align: center; }
+.tank-wrapper {
+  position: relative; width: 120px; height: 200px; margin: 0 auto;
+  background: linear-gradient(to right, #e8e8e8, #d0d0d0, #e8e8e8);
+  border: 3px solid #555; border-radius: 6px; overflow: hidden;
+}
+.tank-scale {
+  position: absolute; left: -24px; top: 0; height: 100%;
+  display: flex; flex-direction: column; justify-content: space-between;
+  color: #333; font-size: 9px; width: 22px; text-align: right;
+}
+.tank-liquid {
+  position: absolute; bottom: 0; width: 100%;
+  transition: height 0.5s ease, background 1s ease;
+}
+/* FEED: Cream / light tan industrial wastewater */
+.liquid-feed { background: linear-gradient(to top, #e8dcc8, #f0e6d2, #f5efe2); }
+/* AERATION: Pale blue / soft cyan */
+.liquid-aerate { background: linear-gradient(to top, #b8d0d8, #c8e0e8, #d8f0f8); }
+/* SETTLING: Cream → pale transition with subtle solids */
+.liquid-settle { background: linear-gradient(to top, #d8c8b0, #e0d4c0, #e8e0d0, #d0e0e8); }
+/* WITHDRAWAL: Clean pale blue */
+.liquid-withdraw { background: linear-gradient(to top, #b0e0e8, #c8f0f8, #e0f8ff); }
+.liquid-idle { background: linear-gradient(to top, #b8d8e0, #d0e8f0); }
+
+.bubble {
+  position: absolute; border-radius: 50%; background: rgba(255,255,255,0.75);
+  animation: bubbleRise linear infinite;
+}
+@keyframes bubbleRise {
+  0% { transform: translateY(0); opacity: 0.85; }
+  100% { transform: translateY(-200px); opacity: 0; }
+}
+.sludge {
+  position: absolute; border-radius: 50%; background: #c8b8a0;
+  animation: sludgeFall ease-out forwards;
+}
+@keyframes sludgeFall {
+  0% { transform: translateY(-10px); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.sludge-layer {
+  position: absolute; bottom: 0; width: 100%; height: 0;
+  background: linear-gradient(to top, #b8a890, #c8b8a0, #d8c8b0);
+  transition: height 1.5s ease; border-radius: 2px;
+}
+.flow-stream {
+  position: absolute; width: 6px; border-radius: 3px; opacity: 0; transition: opacity 0.3s;
+}
+.flow-stream.active { opacity: 1; animation: flowPulse 0.4s linear infinite; }
+@keyframes flowPulse {
+  0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+}
+.flow-in { top: 6px; left: 50%; transform: translateX(-50%); height: 24px; background: linear-gradient(to bottom, #e8dcc8, #f0e6d2); }
+.flow-out { bottom: 35px; right: -6px; height: 30px; background: linear-gradient(to bottom, #c8f0f8, #b0e0e8); }
+.tap { position: absolute; bottom: 35px; right: -18px; width: 20px; height: 12px; background: #777; border-radius: 3px; }
+#levelValue { font-size: 12px; }
+
+/* === SLIDERS === */
+.slider-panel { flex: 0 0 240px; }
+.slider-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 11px; }
+.slider-row label { width: 50px; font-weight: bold; flex-shrink: 0; }
+.slider-row input[type="range"] { flex: 1; height: 16px; }
+.slider-val { width: 60px; text-align: right; font-family: monospace; font-weight: bold; font-size: 11px; flex-shrink: 0; }
+
+/* === SENSORS === */
+.sensor-values { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
+.sensor-card { padding: 4px 6px; border-radius: 4px; border: 2px solid; font-weight: bold; font-size: 11px; min-width: 90px; }
+.sensor-T { border-color: #ff4444; background: #ffe0e0; color: #cc0000; }
+.sensor-pH { border-color: #00aa00; background: #e0ffe0; color: #006600; }
+.sensor-Oxy { border-color: #ff6600; background: #ffeedd; color: #cc4400; }
+.sensor-S1 { border-color: #9933cc; background: #f0e6ff; color: #660099; }
+.sensor-S2 { border-color: #3366cc; background: #e6f0ff; color: #003399; }
+
+/* === GRAPH === */
+.graph-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.graph-container { flex: 1; background: white; border: 2px solid #888; border-radius: 4px; padding: 4px; min-height: 0; }
+#dataGraph { width: 100%; height: 100%; display: block; background: #fff; }
+</style>
+</head>
+<body>
+
+<h1>🔬 SBR Sequencing Batch Reactor</h1>
+
+<div class="container">
+  <!-- TOP ROW: Gauge + Controls + Tank -->
+  <div class="top-grid">
+    <div class="panel gauge-container">
+      <canvas id="mainGauge" class="gauge-canvas" width="200" height="200"></canvas>
+    </div>
+
+    <div class="panel controls">
+      <table class="sequence-table">
+        <thead>
+          <tr>
+            <th>Phase</th>
+            <th>Set(s)</th>
+            <th>Left(s)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="sequenceBody">
+          <tr id="row-FEED">
+            <td>FEED</td>
+            <td><input type="number" id="time-FEED" value="20" min="1" max="999"></td>
+            <td id="timer-FEED" class="timer-cell">--</td>
+            <td id="stat-FEED">—</td>
+          </tr>
+          <tr id="row-AERATION">
+            <td>AERATION</td>
+            <td><input type="number" id="time-AERATION" value="5" min="1" max="999"></td>
+            <td id="timer-AERATION" class="timer-cell">--</td>
+            <td id="stat-AERATION">—</td>
+          </tr>
+          <tr id="row-SETTLING">
+            <td>SETTLING</td>
+            <td><input type="number" id="time-SETTLING" value="3" min="1" max="999"></td>
+            <td id="timer-SETTLING" class="timer-cell">--</td>
+            <td id="stat-SETTLING">—</td>
+          </tr>
+          <tr id="row-WITHDRAWAL">
+            <td>WITHDRAWAL</td>
+            <td><input type="number" id="time-WITHDRAWAL" value="15" min="1" max="999"></td>
+            <td id="timer-WITHDRAWAL" class="timer-cell">--</td>
+            <td id="stat-WITHDRAWAL">—</td>
+          </tr>
+          <tr id="row-IDLE">
+            <td>IDLE</td>
+            <td><input type="number" id="time-IDLE" value="3" min="1" max="999"></td>
+            <td id="timer-IDLE" class="timer-cell">--</td>
+            <td id="stat-IDLE">—</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="btn-group">
+        <button class="btn-run" onclick="startCycle()">▶ Run</button>
+        <button class="btn-pause" onclick="pauseCycle()">⏸ Pause</button>
+        <button class="btn-reset" onclick="resetCycle()">↻ Reset</button>
+        <button class="btn-download" onclick="downloadData()">📥 CSV</button>
+      </div>
+
+      <div class="controls-row">
+        Freq: <input type="number" id="logFreq" value="1" min="1" max="60">s
+        Log: <div id="logToggle" class="toggle-switch" onclick="toggleLogging()"></div>
+      </div>
+
+      <div class="status-indicator">
+        <span id="runLight" class="light yellow"></span>
+        <span id="currentPhase">Ready — Tank Empty</span>
+      </div>
+
+      <div class="controller-status">
+        <b>Controllers:</b>
+        <span id="acidStatus">ACID: OFF</span> ·
+        <span id="baseStatus">BASE: OFF</span> ·
+        <span id="heaterStatus">HEATER: OFF</span> ·
+        <span id="sonicStatus">SONIC: OFF</span>
+      </div>
+    </div>
+
+    <div class="panel tank-panel">
+      <h3>Tank</h3>
+      <div class="tank-wrapper" id="tankWrapper">
+        <div class="tank-scale">
+          <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
+        </div>
+        <div id="liquid" class="tank-liquid" style="height: 0%;"></div>
+        <div id="sludgeLayer" class="sludge-layer"></div>
+        <div id="flowIn" class="flow-stream flow-in"></div>
+        <div id="flowOut" class="flow-stream flow-out"></div>
+        <div class="tap"></div>
+        <div id="bubbleContainer"></div>
+        <div id="sludgeContainer"></div>
+      </div>
+      <p>Level: <span id="levelValue">0</span>%</p>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW: Sliders + Sensors + Graph -->
+  <div class="bottom-row">
+    <div class="panel slider-panel">
+      <h3>🎚 Manual Controls</h3>
+      <div class="slider-row">
+        <label>T °C:</label>
+        <input type="range" id="slider-T" min="0" max="50" step="0.5" value="24" oninput="updateFromSlider('T')">
+        <span class="slider-val" id="val-T-slider">24.0°</span>
+      </div>
+      <div class="slider-row">
+        <label>pH:</label>
+        <input type="range" id="slider-pH" min="0" max="14" step="0.1" value="7.5" oninput="updateFromSlider('pH')">
+        <span class="slider-val" id="val-pH-slider">7.5</span>
+      </div>
+      <div class="slider-row">
+        <label>O₂ %:</label>
+        <input type="range" id="slider-Oxy" min="0" max="100" step="1" value="10" oninput="updateFromSlider('Oxy')">
+        <span class="slider-val" id="val-Oxy-slider">10%</span>
+      </div>
+      <div class="slider-row">
+        <label>S1:</label>
+        <input type="range" id="slider-S1" min="0" max="100" step="1" value="5" oninput="updateFromSlider('S1')">
+        <span class="slider-val" id="val-S1-slider">5</span>
+      </div>
+      <div class="slider-row">
+        <label>S2:</label>
+        <input type="range" id="slider-S2" min="0" max="100" step="1" value="5" oninput="updateFromSlider('S2')">
+        <span class="slider-val" id="val-S2-slider">5</span>
+      </div>
+      <button class="btn-run" style="margin-top:6px; width:100%;" onclick="enableAutoSim()">▶ Resume Auto</button>
+
+      <h3 style="margin-top:10px;">📡 Readings</h3>
+      <div class="sensor-values">
+        <div class="sensor-card sensor-T">T: <span id="val-T">--</span>°C</div>
+        <div class="sensor-card sensor-pH">pH: <span id="val-pH">--</span></div>
+        <div class="sensor-card sensor-Oxy">O₂: <span id="val-Oxy">--</span>%</div>
+        <div class="sensor-card sensor-S1">S1: <span id="val-S1">--</span></div>
+        <div class="sensor-card sensor-S2">S2: <span id="val-S2">--</span></div>
+      </div>
+    </div>
+
+    <div class="panel graph-panel">
+      <h3>📊 Waveform — All Signals</h3>
+      <div class="graph-container">
+        <canvas id="dataGraph" width="600" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const state = {
+  phase: 'IDLE', running: false, paused: false, level: 0, sludgeHeight: 0,
+  logEnabled: false, logFrequency: 1, lastLogTime: 0, cycleStartTime: null,
+  phaseStartTime: null, phaseDurationMs: 0, phaseRemaining: 0,
+  dataLog: [], manualMode: false,
+  sensors: {
+    T: { val: 24, color: '#ff4444', label: 'T', scale: 1, offset: 0 },
+    pH: { val: 7.5, color: '#00aa00', label: 'pH', scale: 100/14, offset: 0 },
+    Oxy: { val: 10, color: '#ff6600', label: 'O₂', scale: 1, offset: 0 },
+    S1: { val: 5, color: '#9933cc', label: 'S1', scale: 1, offset: 0 },
+    S2: { val: 5, color: '#3366cc', label: 'S2', scale: 1, offset: 0 }
+  },
+  phases: ['FEED', 'AERATION', 'SETTLING', 'WITHDRAWAL', 'IDLE'],
+  phaseIndex: 0, timeHistory: [0],
+  sensorHistory: { T: [24], pH: [7.5], Oxy: [10], S1: [5], S2: [5] },
+  bubbleInterval: null, sludgeInterval: null
+};
+
+const gaugeCanvas = document.getElementById('mainGauge');
+const gaugeCtx = gaugeCanvas.getContext('2d');
+const graphCanvas = document.getElementById('dataGraph');
+const graphCtx = graphCanvas.getContext('2d');
+
+// === DRAW GAUGE ===
+function drawGauge() {
+  const w = gaugeCanvas.width;
+  const h = gaugeCanvas.height;
+  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 10;
+  gaugeCtx.clearRect(0, 0, w, h);
+  
+  gaugeCtx.beginPath();
+  gaugeCtx.arc(cx, cy, r, Math.PI * 0.7, Math.PI * 2.3);
+  gaugeCtx.lineWidth = 14; gaugeCtx.strokeStyle = '#e0e0e0'; gaugeCtx.stroke();
+  
+  drawArc(cx, cy, r, 0, 25, '#00aa00');
+  drawArc(cx, cy, r, 25, 50, '#cccc00');
+  drawArc(cx, cy, r, 50, 75, '#ff6600');
+  drawArc(cx, cy, r, 75, 100, '#dd0000');
+  
+  gaugeCtx.font = '9px Arial'; gaugeCtx.fillStyle = '#333';
+  for (let i = 0; i <= 100; i += 20) {
+    const ang = Math.PI * 0.7 + (i / 100) * Math.PI * 1.3;
+    const iX = cx + Math.cos(ang) * (r - 20);
+    const iY = cy + Math.sin(ang) * (r - 20);
+    gaugeCtx.fillText(i.toString(), iX - 6, iY + 3);
+  }
+  
+  const needles = [
+    { k: 'T', o: -15, s: 1 },
+    { k: 'pH', o: -5, s: 100/14 },
+    { k: 'Oxy', o: 5, s: 1 },
+    { k: 'S1', o: 15, s: 1 }
+  ];
+  needles.forEach(n => {
+    const pct = Math.min(100, Math.max(0, state.sensors[n.k].val * n.s));
+    drawNeedle(cx, cy, r - 25, pct, state.sensors[n.k].color, n.o);
+  });
+  
+  gaugeCtx.beginPath();
+  gaugeCtx.arc(cx, cy, 8, 0, Math.PI * 2);
+  gaugeCtx.fillStyle = '#333'; gaugeCtx.fill();
+}
+function drawArc(cx, cy, r, sP, eP, c) {
+  const a1 = Math.PI * 0.7 + (sP / 100) * Math.PI * 1.3;
+  const a2 = Math.PI * 0.7 + (eP / 100) * Math.PI * 1.3;
+  gaugeCtx.beginPath(); gaugeCtx.arc(cx, cy, r, a1, a2);
+  gaugeCtx.lineWidth = 14; gaugeCtx.strokeStyle = c; gaugeCtx.stroke();
+}
+function drawNeedle(cx, cy, len, pct, col, off) {
+  const ang = Math.PI * 0.7 + (pct / 100) * Math.PI * 1.3 + (off * Math.PI / 180);
+  gaugeCtx.beginPath(); gaugeCtx.moveTo(cx, cy);
+  gaugeCtx.lineTo(cx + Math.cos(ang) * len, cy + Math.sin(ang) * len);
+  gaugeCtx.strokeStyle = col; gaugeCtx.lineWidth = 2; gaugeCtx.stroke();
+}
+
+// === DRAW GRAPH — ALWAYS UPDATES, INDEPENDENT OF LOGGING ===
+function drawGraph() {
+  const w = graphCanvas.width;
+  const h = graphCanvas.height;
+  const padL = 35, padR = 50, padT = 8, padB = 20;
+  const gw = w - padL - padR;
+  const gh = h - padT - padB;
+  
+  graphCtx.clearRect(0, 0, w, h);
+  graphCtx.fillStyle = '#fff';
+  graphCtx.fillRect(0, 0, w, h);
+  
+  // Grid lines
+  graphCtx.strokeStyle = '#e0e0e0';
+  graphCtx.lineWidth = 1;
+  for (let i = 0; i <= 100; i += 20) {
+    const y = padT + gh * (1 - i / 100);
+    graphCtx.beginPath();
+    graphCtx.moveTo(padL, y);
+    graphCtx.lineTo(padL + gw, y);
+    graphCtx.stroke();
+    graphCtx.fillStyle = '#666';
+    graphCtx.font = '9px Arial';
+    graphCtx.fillText(i.toString(), 5, y + 3);
+  }
+  
+  // Axis border
+  graphCtx.strokeStyle = '#888';
+  graphCtx.lineWidth = 1;
+  graphCtx.strokeRect(padL, padT, gw, gh);
+  
+  if (state.timeHistory.length < 2) {
+    graphCtx.fillStyle = '#999';
+    graphCtx.font = '11px Arial';
+    graphCtx.fillText('Press Run to start plotting...', w/2 - 75, h/2);
+  } else {
+    const t0 = state.timeHistory[0];
+    const t1 = state.timeHistory[state.timeHistory.length - 1];
+    const timeSpan = Math.max(1, t1 - t0);
+    
+    const keys = ['T', 'pH', 'Oxy', 'S1', 'S2'];
+    keys.forEach(key => {
+      graphCtx.beginPath();
+      graphCtx.strokeStyle = state.sensors[key].color;
+      graphCtx.lineWidth = 2;
+      
+      for (let i = 0; i < state.timeHistory.length; i++) {
+        const t = state.timeHistory[i];
+        let val = state.sensorHistory[key][i];
+        if (key === 'pH') val = (val / 14) * 100;
+        val = Math.max(0, Math.min(100, val));
+        
+        const x = padL + gw * ((t - t0) / timeSpan);
+        const y = padT + gh * (1 - val / 100);
+        
+        i === 0 ? graphCtx.moveTo(x, y) : graphCtx.lineTo(x, y);
+      }
+      graphCtx.stroke();
+    });
+    
+    // Legend
+    let ly = padT + 2;
+    keys.forEach(k => {
+      graphCtx.fillStyle = state.sensors[k].color;
+      graphCtx.fillRect(w - 45, ly, 10, 3);
+      graphCtx.fillStyle = '#333';
+      graphCtx.font = '9px Arial';
+      graphCtx.fillText(k === 'pH' ? 'pH/14' : k, w - 32, ly + 4);
+      ly += gh / 5;
+    });
+  }
+}
+
+// === UPDATE SENSOR READINGS ===
+function updateDisplay() {
+  document.getElementById('val-T').textContent = state.sensors.T.val.toFixed(1);
+  document.getElementById('val-pH').textContent = state.sensors.pH.val.toFixed(2);
+  document.getElementById('val-Oxy').textContent = state.sensors.Oxy.val.toFixed(0);
+  document.getElementById('val-S1').textContent = state.sensors.S1.val.toFixed(0);
+  document.getElementById('val-S2').textContent = state.sensors.S2.val.toFixed(0);
+}
+
+// === UPDATE COUNTDOWN TIMER ===
+function updateTimerDisplay() {
+  if (!state.running || state.paused || !state.phaseStartTime) {
+    state.phases.forEach(p => {
+      const el = document.getElementById(`timer-${p}`);
+      if (el) el.textContent = '--';
+    });
+    return;
+  }
+  const elapsed = Date.now() - state.phaseStartTime;
+  const remaining = Math.max(0, Math.ceil((state.phaseDurationMs - elapsed) / 1000));
+  state.phases.forEach(p => {
+    const el = document.getElementById(`timer-${p}`);
+    if (el) el.textContent = (p === state.phase) ? remaining : '--';
+  });
+}
+
+// === SLIDER HANDLING ===
+function updateFromSlider(key) {
+  state.manualMode = true;
+  const val = parseFloat(document.getElementById(`slider-${key}`).value);
+  state.sensors[key].val = val;
+  const unit = key === 'pH' ? '' : (key === 'T' ? '°' : '%');
+  document.getElementById(`val-${key}-slider`).textContent = 
+    val.toFixed(key === 'T' ? 1 : (key === 'pH' ? 1 : 0)) + unit;
+  updateDisplay();
+  drawGauge();
+  drawGraph();
+}
+function enableAutoSim() { state.manualMode = false; }
+
+// === CYCLE CONTROL ===
+function startCycle() {
+  if (!state.running) {
+    state.running = true; state.paused = false;
+    if (!state.cycleStartTime) resetData();
+    state.cycleStartTime = Date.now(); runPhase();
+  } else if (state.paused) {
+    state.paused = false;
+    state.phaseStartTime = Date.now() - (state.phaseDurationMs - (state.phaseRemaining * 1000));
+    runPhase();
+  }
+}
+function pauseCycle() { 
+  state.paused = true;
+  if (state.phaseStartTime) {
+    const elapsed = Date.now() - state.phaseStartTime;
+    state.phaseRemaining = Math.max(0, (state.phaseDurationMs / 1000) - (elapsed / 1000));
+  }
+  document.getElementById('currentPhase').textContent = '⏸ PAUSED';
+  document.getElementById('runLight').className = 'light yellow';
+}
+function resetCycle() {
+  state.running = false; state.paused = false; state.phaseIndex = 0;
+  state.cycleStartTime = null; state.phaseStartTime = null;
+  state.level = 0; state.sludgeHeight = 0; state.manualMode = false;
+  state.phaseRemaining = 0;
+  resetData(); updateTankUI(); updateDisplay(); drawGauge(); drawGraph();
+  document.getElementById('currentPhase').textContent = 'Ready — Tank Empty';
+  document.getElementById('runLight').className = 'light yellow';
+  document.querySelectorAll('#sequenceBody tr').forEach(tr => tr.classList.remove('active-sequence'));
+  document.querySelectorAll('.timer-cell').forEach(el => el.textContent = '--');
+  ['flowIn', 'flowOut'].forEach(id => document.getElementById(id).classList.remove('active'));
+  stopBubbles(); stopSludge();
+}
+function resetData() {
+  state.dataLog = []; 
+  state.timeHistory = [0];
+  state.sensorHistory = { T: [24], pH: [7.5], Oxy: [10], S1: [5], S2: [5] };
+  document.querySelectorAll('.sludge, .bubble').forEach(el => el.remove());
+}
+function runPhase() {
+  if (!state.running || state.paused) return;
+  const phase = state.phases[state.phaseIndex];
+  
+  let duration;
+  if (state.phaseRemaining && state.phase === phase) {
+    duration = state.phaseRemaining * 1000;
+    state.phaseRemaining = 0;
+  } else {
+    duration = parseInt(document.getElementById(`time-${phase}`).value) * 1000;
+  }
+  
+  state.phase = phase;
+  state.phaseStartTime = Date.now();
+  state.phaseDurationMs = duration;
+  
+  document.querySelectorAll('#sequenceBody tr').forEach(tr => tr.classList.remove('active-sequence'));
+  document.getElementById(`row-${phase}`).classList.add('active-sequence');
+  document.querySelectorAll('#sequenceBody td:last-child').forEach(td => td.textContent = '—');
+  document.getElementById(`stat-${phase}`).textContent = '▶';
+  document.getElementById('currentPhase').textContent = `Phase: ${phase}`;
+  document.getElementById('runLight').className = 'light green';
+  
+  applyPhaseEffects(phase, duration);
+  
+  const phaseStart = Date.now();
+  const countdown = setInterval(() => {
+    if (!state.running || state.paused) { clearInterval(countdown); return; }
+    if (Date.now() - phaseStart >= duration) { clearInterval(countdown); endPhase(phase); }
+  }, 100);
+}
+function endPhase(p) {
+  document.getElementById(`stat-${p}`).textContent = '✓';
+  document.getElementById(`timer-${p}`).textContent = '0';
+  state.phaseIndex = (state.phaseIndex + 1) % state.phases.length;
+  setTimeout(runPhase, 500);
+}
+
+// === PHASE EFFECTS ===
+function applyPhaseEffects(phase, duration) {
+  const flowIn = document.getElementById('flowIn');
+  const flowOut = document.getElementById('flowOut');
+  const liquid = document.getElementById('liquid');
+  flowIn.classList.remove('active'); flowOut.classList.remove('active');
+  stopBubbles(); stopSludge();
+  liquid.className = 'tank-liquid';
+  
+  switch (phase) {
+    case 'FEED':
+      liquid.classList.add('liquid-feed'); flowIn.classList.add('active');
+      animateLevel(0, 92, duration);
+      document.getElementById('sonicStatus').innerHTML = '<b style="color:green">SONIC: ON</b>'; break;
+    case 'AERATION':
+      liquid.classList.add('liquid-aerate'); startBubbles();
+      animateLevel(92, 95, duration);
+      document.getElementById('sonicStatus').textContent = 'SONIC: OFF'; break;
+    case 'SETTLING':
+      liquid.classList.add('liquid-settle'); startSludge();
+      animateLevel(95, 90, duration); break;
+    case 'WITHDRAWAL':
+      liquid.classList.add('liquid-withdraw'); flowOut.classList.add('active');
+      animateLevel(90, 0, duration); break;
+    case 'IDLE':
+      liquid.classList.add('liquid-idle');
+      document.getElementById('sonicStatus').textContent = 'SONIC: OFF'; break;
+  }
+}
+function animateLevel(from, to, dur) {
+  const start = Date.now();
+  const step = () => {
+    if (!state.running || state.paused) return;
+    const p = Math.min((Date.now() - start) / dur, 1);
+    state.level = from + (to - from) * p;
+    updateTankUI(); if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function updateTankUI() {
+  document.getElementById('liquid').style.height = state.level + '%';
+  document.getElementById('levelValue').textContent = Math.round(state.level);
+  document.getElementById('sludgeLayer').style.height = state.sludgeHeight + '%';
+}
+
+// === BUBBLES & SLUDGE ===
+function startBubbles() {
+  const c = document.getElementById('bubbleContainer');
+  state.bubbleInterval = setInterval(() => {
+    if (state.phase !== 'AERATION') { stopBubbles(); return; }
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    const s = 3 + Math.random() * 7;
+    b.style.width = b.style.height = s + 'px';
+    b.style.left = (8 + Math.random() * 104) + 'px';
+    b.style.bottom = '3px';
+    b.style.animationDuration = (1.2 + Math.random() * 1.5) + 's';
+    c.appendChild(b);
+    setTimeout(() => b.remove(), 3000);
+  }, 60);
+}
+function stopBubbles() { clearInterval(state.bubbleInterval); state.bubbleInterval = null; }
+
+function startSludge() {
+  const c = document.getElementById('sludgeContainer');
+  let settled = 0;
+  state.sludgeInterval = setInterval(() => {
+    if (state.phase !== 'SETTLING') { stopSludge(); return; }
+    const p = document.createElement('div');
+    p.className = 'sludge';
+    const s = 2 + Math.random() * 5;
+    p.style.width = p.style.height = s + 'px';
+    p.style.left = (3 + Math.random() * 114) + 'px';
+    p.style.top = (5 + Math.random() * (state.level * 2 - 15)) + 'px';
+    p.style.animationDuration = (0.8 + Math.random() * 1.5) + 's';
+    c.appendChild(p);
+    setTimeout(() => p.remove(), 2500);
+    settled += 0.04;
+    state.sludgeHeight = Math.min(12, settled);
+    updateTankUI();
+  }, 80);
+}
+function stopSludge() { clearInterval(state.sludgeInterval); state.sludgeInterval = null; }
+
+// === MAIN SIMULATION — GRAPH DATA NOW INDEPENDENT OF LOGGING ===
+function simulateSensors() {
+  const t = Date.now();
+  const elapsed = state.cycleStartTime ? (t - state.cycleStartTime) / 1000 : 0;
+  const phaseTime = state.phaseStartTime ? (t - state.phaseStartTime) / 1000 : 0;
+  const pt = phaseTime;
+
+  if (!state.manualMode) {
+    switch (state.phase) {
+      case 'FEED':
+        state.sensors.T.val = 22 + 3 * Math.sin(pt * 0.15);
+        state.sensors.pH.val = 7.0 - 1.5 * (1 - Math.exp(-pt/4)) + 0.5 * Math.sin(pt * 0.3);
+        state.sensors.Oxy.val = 2 + 3 * Math.exp(-pt/5);
+        state.sensors.S1.val = 10 + 40 * (1 - Math.exp(-pt/6));
+        state.sensors.S2.val = 15 + 25 * (1 - Math.exp(-pt/5)); break;
+      case 'AERATION':
+        state.sensors.T.val = 23 + 2 * Math.sin(pt * 0.5);
+        state.sensors.pH.val = 5.5 + 2.5 * (1 - Math.exp(-pt/2)) + 0.3 * Math.sin(pt * 1.2);
+        state.sensors.Oxy.val = 5 + 85 * (1 - Math.exp(-pt/1.5));
+        state.sensors.S1.val = 50 + 15 * Math.sin(pt * 1.5);
+        state.sensors.S2.val = 40 * Math.exp(-pt/3); break;
+      case 'SETTLING':
+        state.sensors.T.val = 24 + 1 * Math.sin(pt * 0.3);
+        state.sensors.pH.val = 7.8 + 0.4 * Math.sin(pt * 0.5);
+        state.sensors.Oxy.val = 90 * Math.exp(-pt/4) + 5;
+        state.sensors.S1.val = 65 * Math.exp(-pt/3) + 5;
+        state.sensors.S2.val = 10 + 5 * Math.sin(pt * 0.4); break;
+      case 'WITHDRAWAL':
+        state.sensors.T.val = 24 + 0.5 * Math.sin(pt * 0.8);
+        state.sensors.pH.val = 7.6 + 0.3 * Math.sin(pt * 0.6);
+        state.sensors.Oxy.val = 15 + 5 * Math.sin(pt * 1.0);
+        state.sensors.S1.val = 8 + 3 * Math.sin(pt * 0.7);
+        state.sensors.S2.val = 8 + 2 * Math.sin(pt * 0.5); break;
+      default:
+        state.sensors.T.val = 24; state.sensors.pH.val = 7.5;
+        state.sensors.Oxy.val = 10; state.sensors.S1.val = 5; state.sensors.S2.val = 5;
+    }
+    
+    ['T', 'pH', 'Oxy', 'S1', 'S2'].forEach(k => {
+      const v = state.sensors[k].val;
+      document.getElementById(`slider-${k}`).value = v;
+      const u = k === 'pH' ? '' : (k === 'T' ? '°' : '%');
+      document.getElementById(`val-${k}-slider`).textContent = 
+        v.toFixed(k === 'T' ? 1 : (k === 'pH' ? 1 : 0)) + u;
+    });
+  }
+
+  state.sensors.T.val = Math.max(0, Math.min(100, state.sensors.T.val));
+  state.sensors.pH.val = Math.max(0, Math.min(14, state.sensors.pH.val));
+  state.sensors.Oxy.val = Math.max(0, Math.min(100, state.sensors.Oxy.val));
+  state.sensors.S1.val = Math.max(0, Math.min(100, state.sensors.S1.val));
+  state.sensors.S2.val = Math.max(0, Math.min(100, state.sensors.S2.val));
+
+  // Controllers
+  const acidOn = state.sensors.pH.val > 9.5;
+  const baseOn = state.sensors.pH.val < 5.5;
+  const heatOn = state.sensors.T.val < 10;
+  const heatOff = state.sensors.T.val > 35;
+  document.getElementById('acidStatus').innerHTML =
+    acidOn ? '<b style="color:red">ACID:ON</b>' : 'ACID:OFF';
+  document.getElementById('baseStatus').innerHTML =
+    baseOn ? '<b style="color:green">BASE:ON</b>' : 'BASE:OFF';
+  document.getElementById('heaterStatus').innerHTML =
+    heatOn ? '<b style="color:red">HEAT:ON</b>' : heatOff ? '<b style="color:orange">HEAT:OFF</b>' : 'HEAT:OFF';
+
+  // === GRAPH DATA — ALWAYS COLLECTED, INDEPENDENT OF LOGGING ===
+  if (state.running) {
+    state.timeHistory.push(elapsed);
+    ['T', 'pH', 'Oxy', 'S1', 'S2'].forEach(k => state.sensorHistory[k].push(state.sensors[k].val));
+    if (state.timeHistory.length > 300) {
+      state.timeHistory.shift();
+      Object.keys(state.sensorHistory).forEach(k => state.sensorHistory[k].shift());
+    }
+  }
+
+  // === FILE LOGGING — SEPARATE, ONLY WHEN LOG=ON ===
+  state.logFrequency = parseInt(document.getElementById('logFreq').value) || 1;
+  if (state.logEnabled && elapsed - state.lastLogTime >= state.logFrequency) {
+    state.lastLogTime = elapsed;
+    state.dataLog.push({
+      time: elapsed.toFixed(2), phase: state.phase,
+      T: state.sensors.T.val.toFixed(2), pH: state.sensors.pH.val.toFixed(3),
+      Oxy: state.sensors.Oxy.val.toFixed(1), S1: state.sensors.S1.val.toFixed(1),
+      S2: state.sensors.S2.val.toFixed(1), level: state.level.toFixed(1),
+      sludge: state.sludgeHeight.toFixed(2), manual: state.manualMode ? 'Y' : 'N'
+    });
+  }
+
+  // Update everything
+  updateTimerDisplay();
+  updateDisplay();
+  drawGauge();
+  drawGraph();
+  
+  requestAnimationFrame(simulateSensors);
+}
+
+function toggleLogging() {
+  state.logEnabled = !state.logEnabled;
+  document.getElementById('logToggle').classList.toggle('on', state.logEnabled);
+}
+function downloadData() {
+  if (!state.dataLog.length) return alert('Enable Log first, then start cycle to collect data!');
+  const h = 'Time,Phase,T,pH,O2,S1,S2,Level,Sludge,Manual\n';
+  const r = state.dataLog.map(p =>
+    `${p.time},${p.phase},${p.T},${p.pH},${p.Oxy},${p.S1},${p.S2},${p.level},${p.sludge},${p.manual}`
+  ).join('\n');
+  const b = new Blob([h + r], { type: 'text/csv' });
+  const u = URL.createObjectURL(b);
+  const a = document.createElement('a');
+  a.href = u; a.download = `SBR_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+  a.click(); URL.revokeObjectURL(u);
+}
+
+// === INITIALIZE ===
+updateDisplay();
+drawGauge();
+drawGraph();
+simulateSensors();
+</script>
+</body>
+</html>
