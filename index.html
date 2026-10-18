@@ -3,746 +3,2297 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SBR Reactor — Graph Always Updates + Lighter Colors</title>
+<title>SBCR Control Dashboard — Sequencing Batch Column Reactor</title>
+<!--
+  ============================================================================
+  SBCR CONTROL DASHBOARD  ·  Sequencing Batch Column Reactor (wastewater R&D)
+  ============================================================================
+  Single-file app. Vanilla JS + Chart.js (CDN). Hardware I/O via Web Serial.
+  Modules (in JS section order):
+    0 Utils/Settings   1 Central Clock    2 Sequencer      3 Sensors
+    4 Simulator        5 Controllers      6 Logger         7 Charts
+    8 Serial           9 Tank/Gauges/UI  10 Bindings/Boot
+  See README.md for browser requirements, hardware hookup and protocol spec.
+  ============================================================================
+-->
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
-body { background: #c8c8c8; padding: 8px; overflow: hidden; height: 100vh; }
-h1 { text-align: center; color: #0044cc; margin-bottom: 6px; font-size: 18px; }
-.container { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; height: calc(100vh - 36px); }
-.panel { background: #dcdcdc; border: 2px solid #aaa; border-radius: 6px; padding: 8px; box-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
-.top-grid { display: grid; grid-template-columns: 200px 1fr 160px; gap: 8px; width: 100%; }
-.bottom-row { display: flex; gap: 8px; width: 100%; flex: 1; min-height: 0; }
+/* ============================ DESIGN TOKENS ============================ */
+:root{
+  --bg:#0a1120; --bg2:#0d1626; --panel:#101a2e; --panel2:#0b1424;
+  --line:#1c2a45; --line2:#26385c;
+  --text:#dce8f7; --muted:#8ba0bd; --dim:#5c7191;
+  --cyan:#22d3ee; --accent:#38bdf8; --green:#34d399; --red:#ef4444;
+  --amber:#f59e0b; --orange:#fb923c; --purple:#a78bfa; --teal:#14b8a6;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;
+  --r:13px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:radial-gradient(1400px 900px at 85% -10%,#14243f 0%,var(--bg) 55%) fixed,var(--bg);
+  color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.45;
+}
+.mono{font-family:var(--mono)}
+.hidden{display:none!important}
+h1,h2,h3{margin:0}
+h1{font-size:17px;letter-spacing:.02em}
+h2{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+   display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.mut{color:var(--dim);font-weight:500;text-transform:none;letter-spacing:0}
+.note{color:var(--dim);font-size:11px;margin:8px 0 0}
+.small{font-size:11px}
+a{color:var(--cyan)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#22314f;border-radius:5px}
+::-webkit-scrollbar-track{background:transparent}
 
-/* === GAUGE === */
-.gauge-container { width: 200px; height: 200px; background: #fff; border-radius: 4px; }
-.gauge-canvas { width: 100%; height: 100%; display: block; }
+/* ============================ HEADER ============================ */
+header#hdr{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  padding:12px 18px;max-width:1760px;margin:0 auto;
+}
+.brand{display:flex;align-items:center;gap:11px}
+.brand .sub{color:var(--dim);font-size:11px;margin-top:1px}
+.hdr-mid{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hdr-right{display:flex;align-items:center;gap:9px}
+.seg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
+.seg button{
+  background:transparent;border:0;color:var(--muted);font:600 12px var(--sans);
+  padding:6px 13px;border-radius:8px;cursor:pointer;transition:.15s;
+}
+.seg button.active{background:#173355;color:#7dd3fc;box-shadow:inset 0 0 0 1px #24507c}
+.tsel{display:flex;align-items:center;gap:5px;color:var(--dim);font:600 12px var(--mono)}
+.clock-chip{background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+  padding:6px 11px;font-size:12px;color:#9fe8f5;min-width:120px;text-align:center}
+.chip-btn{
+  background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:9px;
+  padding:7px 11px;font:700 11px var(--mono);letter-spacing:.05em;cursor:pointer;
+}
+.chip-btn.ok{color:var(--green);border-color:#1d4a3a}
+.chip-btn.warn{color:var(--amber);border-color:#5a3f14}
+.chip-btn.err{color:var(--red);border-color:#5a1d1d}
+#btnEstop{
+  background:linear-gradient(180deg,#ff5b5b,#c62828);color:#fff;border:1px solid #ff8a80;
+  font:800 12.5px var(--sans);letter-spacing:.09em;padding:11px 18px;border-radius:12px;cursor:pointer;
+  animation:estopPulse 2.2s infinite;
+}
+#btnEstop:disabled{opacity:.55;animation:none;cursor:not-allowed}
+@keyframes estopPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.55)}70%{box-shadow:0 0 0 13px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
+.btn.warn{background:#3a2c10;border-color:#6b4e15;color:#fbbf24}
 
-/* === CONTROLS === */
-.controls { min-width: 360px; }
-.sequence-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px; }
-.sequence-table th, .sequence-table td { border: 1px solid #888; padding: 2px 4px; text-align: center; }
-.sequence-table th { background: #b0b0b0; font-size: 11px; }
-.active-sequence { background: #90ee90 !important; font-weight: bold; }
-.timer-cell { font-weight: bold; color: #c00; min-width: 50px; font-family: monospace; font-size: 12px; }
-.btn-group { display: flex; gap: 4px; margin: 4px 0; flex-wrap: wrap; }
-button { padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 11px; }
-.btn-run { background: #00cc00; color: white; }
-.btn-pause { background: #ff6600; color: white; }
-.btn-reset { background: #666; color: white; }
-.btn-download { background: #0066cc; color: white; }
-button:hover { transform: scale(1.05); }
-.controls-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; font-size: 11px; }
-input[type="number"] { width: 45px; padding: 2px; text-align: center; border: 1px solid #888; border-radius: 3px; font-size: 11px; }
-.toggle-switch { width: 40px; height: 20px; background: #888; border-radius: 10px; position: relative; cursor: pointer; transition: background 0.3s; }
-.toggle-switch.on { background: #00cc00; }
-.toggle-switch::after { content: ''; position: absolute; width: 16px; height: 16px; background: white; border-radius: 50%; top: 2px; left: 2px; transition: transform 0.3s; }
-.toggle-switch.on::after { transform: translateX(20px); }
-.status-indicator { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
-.light { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #333; display: inline-block; }
-.light.green { background: #00ff00; box-shadow: 0 0 6px #00ff00; }
-.light.yellow { background: #ffff00; box-shadow: 0 0 6px #ffff00; }
-.controller-status { font-size: 10px; line-height: 1.5; padding: 4px; background: #e8e8e8; border-radius: 3px; margin-top: 4px; }
+/* ============================ LAYOUT ============================ */
+#layout{
+  display:grid;grid-template-columns:330px minmax(0,1fr) 410px;gap:14px;
+  max-width:1760px;margin:0 auto;padding:0 16px 24px;align-items:start;
+}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.panel{
+  background:linear-gradient(180deg,#111c33,#0d1626);border:1px solid var(--line);
+  border-radius:var(--r);padding:13px;box-shadow:0 10px 28px rgba(0,0,0,.35);
+}
+#noSerialBanner{
+  max-width:1760px;margin:0 auto 4px;padding:9px 14px;font-size:12px;
+  background:#2a1518;border:1px solid #6b2430;border-radius:10px;color:#fda4af;
+}
+.banner-inline{color:#fda4af;font-size:11px;margin-top:6px}
 
-/* === TANK — LIGHTER INDUSTRIAL WASTEWATER COLORS === */
-.tank-panel { text-align: center; }
-.tank-wrapper {
-  position: relative; width: 120px; height: 200px; margin: 0 auto;
-  background: linear-gradient(to right, #e8e8e8, #d0d0d0, #e8e8e8);
-  border: 3px solid #555; border-radius: 6px; overflow: hidden;
+/* ============================ CONTROLS ============================ */
+.btn{
+  background:#16233d;border:1px solid var(--line2);color:var(--text);
+  padding:7px 12px;border-radius:9px;cursor:pointer;font:600 12px var(--sans);transition:.15s;
 }
-.tank-scale {
-  position: absolute; left: -24px; top: 0; height: 100%;
-  display: flex; flex-direction: column; justify-content: space-between;
-  color: #333; font-size: 9px; width: 22px; text-align: right;
+.btn:hover:not(:disabled){filter:brightness(1.25)}
+.btn:disabled{opacity:.38;cursor:not-allowed}
+.btn.primary{background:linear-gradient(180deg,#0ea5b7,#0b6e7e);border-color:#155e6b;color:#02141a;font-weight:800}
+.btn.ghost{background:transparent}
+.btn.sq{padding:7px 9px}
+.btn.danger{background:#3d1518;border-color:#7c2d33;color:#fca5a5}
+input,select{
+  background:#0a1322;border:1px solid var(--line2);color:var(--text);border-radius:7px;
+  padding:4px 6px;font-family:var(--mono);font-size:12px;
 }
-.tank-liquid {
-  position: absolute; bottom: 0; width: 100%;
-  transition: height 0.5s ease, background 1s ease;
-}
-/* FEED: Cream / light tan industrial wastewater */
-.liquid-feed { background: linear-gradient(to top, #e8dcc8, #f0e6d2, #f5efe2); }
-/* AERATION: Pale blue / soft cyan */
-.liquid-aerate { background: linear-gradient(to top, #b8d0d8, #c8e0e8, #d8f0f8); }
-/* SETTLING: Cream → pale transition with subtle solids */
-.liquid-settle { background: linear-gradient(to top, #d8c8b0, #e0d4c0, #e8e0d0, #d0e0e8); }
-/* WITHDRAWAL: Clean pale blue */
-.liquid-withdraw { background: linear-gradient(to top, #b0e0e8, #c8f0f8, #e0f8ff); }
-.liquid-idle { background: linear-gradient(to top, #b8d8e0, #d0e8f0); }
+input:focus,select:focus,button:focus-visible{outline:1.5px solid var(--cyan);outline-offset:1px}
+input[type=checkbox]{accent-color:#0ea5b7;width:14px;height:14px;cursor:pointer}
+label.ck{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:11.5px;cursor:pointer;white-space:nowrap}
+.w40{width:44px}.w48{width:52px}.w56{width:60px}
 
-.bubble {
-  position: absolute; border-radius: 50%; background: rgba(255,255,255,0.75);
-  animation: bubbleRise linear infinite;
+/* ============================ TANK ============================ */
+#tankWrap{position:relative;max-width:330px;margin:0 auto}
+#tankSvg{width:100%;display:block}
+.vessel{fill:rgba(148,197,255,.035);stroke:rgba(160,196,240,.28);stroke-width:2}
+.vesselGlass{fill:none;stroke:rgba(255,255,255,.10);stroke-width:1;pointer-events:none}
+#waterRect{fill:var(--water,#64748b);opacity:.78;transition:fill .9s}
+.wave{fill:var(--water,#64748b);opacity:.6;transition:fill .9s}
+.wave.w2{opacity:.32}
+#wave1{animation:waveL 6s linear infinite}
+#wave2{animation:waveR 9.5s linear infinite}
+@keyframes waveL{from{transform:translateX(0)}to{transform:translateX(-140px)}}
+@keyframes waveR{from{transform:translateX(-140px)}to{transform:translateX(0)}}
+#tankWrap[data-phase=FEEDING]    {--water:#f59e0b}
+#tankWrap[data-phase=AERATION]   {--water:#3b82f6}
+#tankWrap[data-phase=SETTLING]   {--water:#14b8a6}
+#tankWrap[data-phase=WITHDRAWAL] {--water:#a855f7}
+#tankWrap[data-phase=IDLE]       {--water:#64748b}
+#bubbles circle,#particles circle{
+  fill:rgba(255,255,255,.55);opacity:0;animation-play-state:paused!important;
 }
-@keyframes bubbleRise {
-  0% { transform: translateY(0); opacity: 0.85; }
-  100% { transform: translateY(-200px); opacity: 0; }
+#bubbles circle{animation:rise linear infinite}
+#particles circle{fill:rgba(190,205,225,.5);animation:sink linear infinite}
+#tankWrap.running[data-phase=AERATION] #bubbles circle{opacity:.6;animation-play-state:running!important}
+#tankWrap.running[data-phase=SETTLING] #particles circle{opacity:.75;animation-play-state:running!important}
+@keyframes rise{from{transform:translateY(0);opacity:.7}70%{opacity:.55}to{transform:translateY(-235px);opacity:0}}
+@keyframes sink{from{transform:translateY(0);opacity:.8}to{transform:translateY(185px);opacity:.12}}
+.pipe{stroke:#3d5578;stroke-width:4;fill:none;stroke-linecap:round}
+.inletPipe{stroke-dasharray:7 7}
+.outletPipe{stroke-dasharray:7 7}
+#tankWrap.running[data-phase=FEEDING] .inletPipe{stroke:#f59e0b;animation:dashflow 1s linear infinite}
+#tankWrap.running[data-phase=WITHDRAWAL] .outletPipe{stroke:#a855f7;animation:dashflow 1s linear infinite}
+@keyframes dashflow{to{stroke-dashoffset:-28}}
+.ticks line{stroke:rgba(148,163,184,.25);stroke-width:1;stroke-dasharray:3 4}
+.ticks text{fill:var(--dim);font-size:9px}
+.rod{fill:#546a8d}
+.rodTip{fill:#7c93b8}
+#sonicRod.on .rod,#sonicRod.on .rodTip{fill:#eab308;filter:drop-shadow(0 0 5px #eab308)}
+.coil{fill:none;stroke:#4a5a78;stroke-width:3}
+.coil.on{stroke:var(--orange);filter:drop-shadow(0 0 6px var(--orange))}
+.port{fill:#3d5578}
+.port.on{filter:drop-shadow(0 0 5px currentColor)}
+.acidPort{fill:#5b3a4a}.basePort{fill:#33456b}
+.acidPort.on{color:#fb7185}.basePort.on{color:#60a5fa}
+.tank-phase{
+  text-align:center;margin-top:2px;font-size:11px;letter-spacing:.28em;color:var(--dim);
 }
-.sludge {
-  position: absolute; border-radius: 50%; background: #c8b8a0;
-  animation: sludgeFall ease-out forwards;
+.actuator{
+  position:absolute;display:flex;align-items:center;gap:6px;
+  background:rgba(9,16,30,.92);border:1px solid var(--line);border-radius:9px;
+  padding:4px 8px;font-size:10px;color:var(--muted);transition:.25s;
 }
-@keyframes sludgeFall {
-  0% { transform: translateY(-10px); opacity: 1; }
-  100% { transform: translateY(0); opacity: 1; }
-}
-.sludge-layer {
-  position: absolute; bottom: 0; width: 100%; height: 0;
-  background: linear-gradient(to top, #b8a890, #c8b8a0, #d8c8b0);
-  transition: height 1.5s ease; border-radius: 2px;
-}
-.flow-stream {
-  position: absolute; width: 6px; border-radius: 3px; opacity: 0; transition: opacity 0.3s;
-}
-.flow-stream.active { opacity: 1; animation: flowPulse 0.4s linear infinite; }
-@keyframes flowPulse {
-  0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
-}
-.flow-in { top: 6px; left: 50%; transform: translateX(-50%); height: 24px; background: linear-gradient(to bottom, #e8dcc8, #f0e6d2); }
-.flow-out { bottom: 35px; right: -6px; height: 30px; background: linear-gradient(to bottom, #c8f0f8, #b0e0e8); }
-.tap { position: absolute; bottom: 35px; right: -18px; width: 20px; height: 12px; background: #777; border-radius: 3px; }
-#levelValue { font-size: 12px; }
+.actuator svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.actuator .lamp{margin-left:2px}
+.actuator.on{color:var(--lc);border-color:var(--lc)}
+.actuator.on svg{filter:drop-shadow(0 0 5px var(--lc))}
+.actuator[data-act=sonic]{--lc:#eab308;left:50%;transform:translateX(-50%);top:-4px}
+.actuator[data-act=heater]{--lc:#fb923c;right:-8px;bottom:34px}
+.actuator[data-act=acid]{--lc:#fb7185;left:-14px;top:44%}
+.actuator[data-act=base]{--lc:#60a5fa;right:-14px;top:36%}
 
-/* === SLIDERS === */
-.slider-panel { flex: 0 0 240px; }
-.slider-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 11px; }
-.slider-row label { width: 50px; font-weight: bold; flex-shrink: 0; }
-.slider-row input[type="range"] { flex: 1; height: 16px; }
-.slider-val { width: 60px; text-align: right; font-family: monospace; font-weight: bold; font-size: 11px; flex-shrink: 0; }
+/* ============================ SEQUENCER ============================ */
+.phase-pipeline{display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-bottom:12px}
+.phase-pipeline i{color:var(--dim);font-style:normal;font-size:11px}
+.chip{
+  --pc:#64748b;
+  padding:3px 8px;border-radius:7px;border:1px solid var(--line);color:var(--muted);
+  font-size:10.5px;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:.25s;
+}
+.chip::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pc);opacity:.55}
+.chip.active{background:var(--pc);border-color:var(--pc);color:#07101d;animation:chipPulse 1.6s infinite}
+.chip.active::before{background:#07101d;opacity:1}
+@keyframes chipPulse{50%{box-shadow:0 0 9px var(--pc)}}
+.phase-now{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:11px 12px}
+.ph-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ph-name{font-size:16px;font-weight:800;letter-spacing:.04em}
+.badge{
+  font:800 10px var(--mono);letter-spacing:.12em;padding:4px 9px;border-radius:7px;
+  background:#243152;color:#aebfd8;border:1px solid var(--line2);
+}
+.badge.st-running{background:#0d3a2e;color:#5eead4;border-color:#1d5c49}
+.badge.st-paused{background:#3a2c10;color:#fbbf24;border-color:#6b4e15}
+.badge.st-finished{background:#0c2b3a;color:#7dd3fc;border-color:#155e75}
+.badge.st-estop{background:#4a1015;color:#fecaca;border-color:#91242e;animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.55}}
+.cd-big{font-size:36px;font-weight:700;color:#e6f2ff;text-align:center;margin:7px 0 0;letter-spacing:.02em}
+.cd-cap{text-align:center;color:var(--dim);font-size:10px;letter-spacing:.22em;margin-bottom:8px}
+.cd-bar{height:7px;background:#0a1322;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.cd-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#0ea5b7,#38bdf8);transition:width .3s linear}
+.kv{display:flex;justify-content:space-between;align-items:center;padding:3.5px 0;color:var(--muted);font-size:11.5px}
+.kv b{color:var(--text);font-weight:600;font-size:12px}
+.seq-controls{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:11px}
+.seq-controls .btn{padding:9px 4px;text-align:center}
 
-/* === SENSORS === */
-.sensor-values { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
-.sensor-card { padding: 4px 6px; border-radius: 4px; border: 2px solid; font-weight: bold; font-size: 11px; min-width: 90px; }
-.sensor-T { border-color: #ff4444; background: #ffe0e0; color: #cc0000; }
-.sensor-pH { border-color: #00aa00; background: #e0ffe0; color: #006600; }
-.sensor-Oxy { border-color: #ff6600; background: #ffeedd; color: #cc4400; }
-.sensor-S1 { border-color: #9933cc; background: #f0e6ff; color: #660099; }
-.sensor-S2 { border-color: #3366cc; background: #e6f0ff; color: #003399; }
+/* ============================ CYCLE CONFIG ============================ */
+.dur-grid{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.dur-grid>div{display:grid;grid-template-columns:96px 1fr 36px;align-items:center;gap:8px}
+.dur-grid label{color:var(--muted);font-size:12px}
+.dur-grid .unit{color:var(--dim);font-size:11px;font-family:var(--mono)}
+.dur-grid input{width:100%}
+.kv.total{border-top:1px dashed var(--line);margin-top:9px;padding-top:9px}
+.kv.total b{font-size:14px;color:#9fe8f5}
+/* repeat / continuous-loop selector (Cycle configuration) */
+.seq-repeat{display:flex;flex-direction:column;gap:6px;margin-top:9px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;background:rgba(148,163,184,.04)}
+.seq-repeat label.ck{white-space:normal;align-items:center}
+.seq-repeat label.ck.nowrap{white-space:nowrap}
+.seq-repeat b{color:var(--text)}
+.seq-repeat.locked{opacity:.55}
 
-/* === GRAPH === */
-.graph-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.graph-container { flex: 1; background: white; border: 2px solid #888; border-radius: 4px; padding: 4px; min-height: 0; }
-#dataGraph { width: 100%; height: 100%; display: block; background: #fff; }
+/* ============================ GAUGES ============================ */
+.gauge-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(198px,1fr));gap:11px}
+.gauge-card{
+  background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px 10px 10px;
+  display:flex;flex-direction:column;gap:5px;transition:border-color .3s, box-shadow .3s;
+}
+.gauge-card.alarm{border-color:#91242e;box-shadow:0 0 0 1px #91242e,0 0 14px rgba(239,68,68,.25);animation:blink 1.2s infinite}
+.g-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.g-name{font-size:12px;font-weight:700;color:#cfe0f2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trend{font-size:14px;font-weight:700;line-height:1}
+.trend.up{color:var(--green)}.trend.down{color:var(--orange)}.trend.flat{color:var(--dim)}
+.gauge-cv{display:block;width:100%;height:104px}
+.spark-cv{display:block;width:100%;height:26px;opacity:.9}
+.g-read{display:flex;align-items:baseline;justify-content:center;gap:6px}
+.g-read b{font-size:22px;font-weight:700;color:#eef6ff}
+.g-unit{color:var(--dim);font-size:11px}
+.g-conf{display:grid;grid-template-columns:1fr 44px 1fr 44px;gap:4px 5px;margin-top:2px}
+.g-conf label{display:flex;align-items:center;gap:4px;color:var(--dim);font-size:9.5px;justify-content:space-between}
+.g-conf label.lbl{grid-column:span 2;justify-content:flex-start;gap:6px}
+.g-conf input{width:100%;padding:2px 4px;font-size:10.5px;border-radius:5px}
+.g-scale{display:flex;justify-content:space-between;color:var(--dim);font-size:9px;font-family:var(--mono);padding:0 26px;margin-top:-4px}
+.chip-mini{
+  font:700 9.5px var(--mono);letter-spacing:.08em;padding:3px 8px;border-radius:6px;
+  border:1px solid var(--line2);color:var(--dim);
+}
+.chip-mini.sim{color:#7dd3fc;border-color:#155e75}
+.chip-mini.live{color:var(--green);border-color:#1d5c49}
+.chip-mini.warn{color:var(--amber);border-color:#6b4e15}
+.chip-mini.off{color:var(--dim)}
+.chip-mini.err{color:#fca5a5;border-color:#7c2d33}
+
+/* ============================ CONTROLLERS ============================ */
+.interlock{
+  background:#0a1322;border:1px solid var(--line);border-radius:9px;padding:7px 10px;
+  font-size:10.5px;color:var(--dim);margin-bottom:10px;letter-spacing:.02em;
+}
+.interlock.alert{color:#fbbf24;border-color:#6b4e15;background:#241b06}
+.ctrl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:10px}
+.ctrl-card{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:10px;display:flex;flex-direction:column;gap:7px}
+.c-head{display:flex;align-items:center;gap:8px}
+.c-head b{font-size:12.5px}
+.ph-note{margin-left:auto;color:var(--dim);font-size:10px;border:1px dashed var(--line2);padding:2px 6px;border-radius:6px}
+.c-fields{display:flex;gap:10px;flex-wrap:wrap}
+.c-fields label{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px}
+.c-fields input{width:64px}
+.c-state{font-size:10.5px;color:var(--dim);border-top:1px dashed var(--line);padding-top:6px;letter-spacing:.03em}
+.lamp{width:11px;height:11px;border-radius:50%;background:#2c3a57;box-shadow:inset 0 0 3px #000;flex:none;transition:.2s}
+.lamp.on{background:var(--lc,#34d399);box-shadow:0 0 10px var(--lc,#34d399),0 0 3px var(--lc,#34d399)}
+.ctrl-card[data-c=sonic] .lamp{--lc:#eab308}
+.ctrl-card[data-c=heater] .lamp{--lc:#fb923c}
+.ctrl-card[data-c=acid] .lamp{--lc:#fb7185}
+.ctrl-card[data-c=base] .lamp{--lc:#60a5fa}
+.ctrl-card[data-c=watch] .lamp{--lc:#f87171}
+.warn{color:#fbbf24;font-size:10.5px;border:1px solid #6b4e15;background:#241b06;border-radius:6px;padding:2px 7px;font-weight:600}
+
+/* ============================ CHARTS ============================ */
+#chartsPanel select{max-width:130px}
+.ch-title{font-size:11px;font-weight:700;color:#b9cbe2;margin:2px 0 3px;display:flex;justify-content:space-between}
+.chart-box{position:relative;height:112px}
+.chart-card{margin-bottom:9px}
+.chart-card:last-child{margin-bottom:0}
+
+/* ============================ LOG TABLE ============================ */
+.log-controls{display:flex;flex-direction:column;gap:8px;margin-bottom:9px}
+.log-controls>label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11.5px}
+.col-checks{display:flex;flex-wrap:wrap;gap:5px 11px}
+.log-btns{display:flex;gap:7px;flex-wrap:wrap}
+.table-wrap{max-height:196px;overflow:auto;border:1px solid var(--line);border-radius:9px}
+table{width:100%;border-collapse:collapse;font-size:10.5px}
+th,td{padding:4px 7px;text-align:right;white-space:nowrap;border-bottom:1px solid #14203a}
+th{position:sticky;top:0;background:#0e1830;color:var(--muted);font-weight:600;z-index:1}
+th:first-child,td:first-child{text-align:left}
+td{color:#c3d3e8}
+tr:last-child td{border-bottom:0}
+
+/* ============================ SERIAL ============================ */
+.serial-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.serial-status{font-size:10.5px;color:var(--dim);margin-bottom:8px;letter-spacing:.04em}
+.serial-status.ok{color:var(--green)}.serial-status.warn{color:var(--amber)}.serial-status.err{color:#fca5a5}
+.mon-head{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:5px}
+#serialMon{
+  height:178px;overflow:auto;background:#070d1a;border:1px solid var(--line);border-radius:9px;
+  padding:6px 8px;font-size:10.5px;line-height:1.6;
+}
+.ml{display:flex;gap:7px;align-items:baseline}
+.ml .mt{color:#41526e;flex:none}
+.ml .md{flex:none;font-weight:800;font-size:9px;padding:1px 5px;border-radius:4px;letter-spacing:.06em}
+.ml.rx .md{color:#0891b2;background:#0b2b33}
+.ml.tx .md{color:#b45309;background:#33230a}
+.ml.sys .md{color:#64748b;background:#141d30}
+.ml.sys .mv{color:#94a3b8;font-style:italic}
+.ml.rx .mv{color:#a5d8ef;word-break:break-all}
+.ml.tx .mv{color:#fcd34d;word-break:break-all}
+details.proto{margin-top:9px;color:var(--muted);font-size:11px}
+details.proto summary{cursor:pointer;color:#7dd3fc}
+details.proto pre{
+  background:#070d1a;border:1px solid var(--line);border-radius:8px;padding:9px;
+  font-size:10px;line-height:1.55;color:#a5d8ef;overflow:auto;margin:7px 0 0;
+}
+
+/* ============================ MODAL / TOAST / MISC ============================ */
+#modalOverlay,#helpOverlay{
+  position:fixed;inset:0;background:rgba(3,8,18,.72);backdrop-filter:blur(3px);
+  display:flex;align-items:center;justify-content:center;z-index:60;padding:18px;
+}
+.dialog{
+  width:470px;max-width:100%;max-height:88vh;overflow:auto;
+  background:linear-gradient(180deg,#121d34,#0d1626);border:1px solid var(--line2);
+  border-radius:15px;padding:18px;box-shadow:0 24px 70px rgba(0,0,0,.6);
+}
+.dialog h3{font-size:15px;margin-bottom:10px}
+.dialog .dlg-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:16px}
+.modal-t{width:100%;border-collapse:collapse;margin:8px 0}
+.modal-t td{padding:5px 4px;border-bottom:1px solid #16223c;text-align:left}
+.modal-t td:last-child{text-align:right}
+.help-body h4{color:#7dd3fc;margin:13px 0 5px;font-size:12px;text-transform:uppercase;letter-spacing:.07em}
+.help-body p,.help-body li{color:var(--muted);font-size:12px}
+.help-body ul{margin:4px 0;padding-left:18px}
+.help-body code{background:#0a1322;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-family:var(--mono);font-size:10.5px;color:#a5d8ef}
+.help-body pre{background:#070d1a;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:10px;line-height:1.55;color:#a5d8ef;overflow:auto}
+#toasts{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:80;align-items:center}
+.toast{
+  background:#132341;border:1px solid #24507c;color:#cfe6f7;border-radius:10px;
+  padding:9px 15px;font-size:12px;opacity:0;transform:translateY(8px);transition:.3s;max-width:520px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5);
+}
+.toast.show{opacity:1;transform:none}
+.toast.warn{border-color:#6b4e15;color:#fde68a}
+.toast.err{border-color:#7c2d33;color:#fecaca}
+.toast.ok{border-color:#1d5c49;color:#a7f3d0}
+
+/* ============================ RESPONSIVE ============================ */
+@media (max-width:1560px){
+  #layout{grid-template-columns:330px minmax(0,1fr)}
+  #rightCol{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;align-items:start}
+  #chartsPanel{grid-column:1/-1}
+}
+@media (max-width:1020px){
+  #layout{grid-template-columns:1fr}
+  #rightCol{grid-template-columns:1fr}
+  .hdr-mid,.hdr-right{margin:0 auto}
+}
 </style>
 </head>
 <body>
+<div id="noSerialBanner" class="hidden">
+  Web Serial API is not available in this browser — the hardware link is disabled,
+  but <b>simulator mode is fully functional</b>. Use Chromium-based Chrome/Edge 89+
+  served over HTTPS, localhost, or opened as a local file.
+</div>
 
-<h1>🔬 SBR Sequencing Batch Reactor</h1>
-
-<div class="container">
-  <!-- TOP ROW: Gauge + Controls + Tank -->
-  <div class="top-grid">
-    <div class="panel gauge-container">
-      <canvas id="mainGauge" class="gauge-canvas" width="200" height="200"></canvas>
-    </div>
-
-    <div class="panel controls">
-      <table class="sequence-table">
-        <thead>
-          <tr>
-            <th>Phase</th>
-            <th>Set(s)</th>
-            <th>Left(s)</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="sequenceBody">
-          <tr id="row-FEED">
-            <td>FEED</td>
-            <td><input type="number" id="time-FEED" value="20" min="1" max="999"></td>
-            <td id="timer-FEED" class="timer-cell">--</td>
-            <td id="stat-FEED">—</td>
-          </tr>
-          <tr id="row-AERATION">
-            <td>AERATION</td>
-            <td><input type="number" id="time-AERATION" value="5" min="1" max="999"></td>
-            <td id="timer-AERATION" class="timer-cell">--</td>
-            <td id="stat-AERATION">—</td>
-          </tr>
-          <tr id="row-SETTLING">
-            <td>SETTLING</td>
-            <td><input type="number" id="time-SETTLING" value="3" min="1" max="999"></td>
-            <td id="timer-SETTLING" class="timer-cell">--</td>
-            <td id="stat-SETTLING">—</td>
-          </tr>
-          <tr id="row-WITHDRAWAL">
-            <td>WITHDRAWAL</td>
-            <td><input type="number" id="time-WITHDRAWAL" value="15" min="1" max="999"></td>
-            <td id="timer-WITHDRAWAL" class="timer-cell">--</td>
-            <td id="stat-WITHDRAWAL">—</td>
-          </tr>
-          <tr id="row-IDLE">
-            <td>IDLE</td>
-            <td><input type="number" id="time-IDLE" value="3" min="1" max="999"></td>
-            <td id="timer-IDLE" class="timer-cell">--</td>
-            <td id="stat-IDLE">—</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div class="btn-group">
-        <button class="btn-run" onclick="startCycle()">▶ Run</button>
-        <button class="btn-pause" onclick="pauseCycle()">⏸ Pause</button>
-        <button class="btn-reset" onclick="resetCycle()">↻ Reset</button>
-        <button class="btn-download" onclick="downloadData()">📥 CSV</button>
-      </div>
-
-      <div class="controls-row">
-        Freq: <input type="number" id="logFreq" value="1" min="1" max="60">s
-        Log: <div id="logToggle" class="toggle-switch" onclick="toggleLogging()"></div>
-      </div>
-
-      <div class="status-indicator">
-        <span id="runLight" class="light yellow"></span>
-        <span id="currentPhase">Ready — Tank Empty</span>
-      </div>
-
-      <div class="controller-status">
-        <b>Controllers:</b>
-        <span id="acidStatus">ACID: OFF</span> ·
-        <span id="baseStatus">BASE: OFF</span> ·
-        <span id="heaterStatus">HEATER: OFF</span> ·
-        <span id="sonicStatus">SONIC: OFF</span>
-      </div>
-    </div>
-
-    <div class="panel tank-panel">
-      <h3>Tank</h3>
-      <div class="tank-wrapper" id="tankWrapper">
-        <div class="tank-scale">
-          <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
-        </div>
-        <div id="liquid" class="tank-liquid" style="height: 0%;"></div>
-        <div id="sludgeLayer" class="sludge-layer"></div>
-        <div id="flowIn" class="flow-stream flow-in"></div>
-        <div id="flowOut" class="flow-stream flow-out"></div>
-        <div class="tap"></div>
-        <div id="bubbleContainer"></div>
-        <div id="sludgeContainer"></div>
-      </div>
-      <p>Level: <span id="levelValue">0</span>%</p>
+<header id="hdr">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
+      <path d="M9 3h6M10 3v5l-5.2 8.7A3 3 0 0 0 7.4 21h9.2a3 3 0 0 0 2.6-4.3L14 8V3" fill="none" stroke="#22d3ee" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M7.3 15.5h9.4" stroke="#22d3ee" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>SBCR Control Dashboard</h1>
+      <div class="sub">Sequencing Batch Column Reactor · bench research unit</div>
     </div>
   </div>
+  <div class="hdr-mid">
+    <div class="seg" id="modeSeg" title="Operating mode">
+      <button type="button" data-mode="real">Real</button>
+      <button type="button" data-mode="sim">Simulator</button>
+    </div>
+    <label class="tsel" id="tsWrap" title="Simulator time-scale multiplier">×
+      <select data-setting="timeScale" id="tsSel" style="width:64px">
+        <option value="1">1</option><option value="10">10</option><option value="60">60</option>
+      </select>
+    </label>
+    <div class="clock-chip mono" id="procClock" title="Process time (affected by time-scale)">T+ 00:00:00</div>
+  </div>
+  <div class="hdr-right">
+    <button class="chip-btn" id="serialChip" title="Serial link status — click to open the serial panel">SERIAL · OFF</button>
+    <button class="btn ghost sq" id="btnHelp" title="Help, protocol &amp; setup">?</button>
+    <button class="btn warn hidden" id="btnClearEstop" type="button">CLEAR E-STOP</button>
+    <button id="btnEstop" type="button">EMERGENCY STOP</button>
+  </div>
+</header>
 
-  <!-- BOTTOM ROW: Sliders + Sensors + Graph -->
-  <div class="bottom-row">
-    <div class="panel slider-panel">
-      <h3>🎚 Manual Controls</h3>
-      <div class="slider-row">
-        <label>T °C:</label>
-        <input type="range" id="slider-T" min="0" max="50" step="0.5" value="24" oninput="updateFromSlider('T')">
-        <span class="slider-val" id="val-T-slider">24.0°</span>
-      </div>
-      <div class="slider-row">
-        <label>pH:</label>
-        <input type="range" id="slider-pH" min="0" max="14" step="0.1" value="7.5" oninput="updateFromSlider('pH')">
-        <span class="slider-val" id="val-pH-slider">7.5</span>
-      </div>
-      <div class="slider-row">
-        <label>O₂ %:</label>
-        <input type="range" id="slider-Oxy" min="0" max="100" step="1" value="10" oninput="updateFromSlider('Oxy')">
-        <span class="slider-val" id="val-Oxy-slider">10%</span>
-      </div>
-      <div class="slider-row">
-        <label>S1:</label>
-        <input type="range" id="slider-S1" min="0" max="100" step="1" value="5" oninput="updateFromSlider('S1')">
-        <span class="slider-val" id="val-S1-slider">5</span>
-      </div>
-      <div class="slider-row">
-        <label>S2:</label>
-        <input type="range" id="slider-S2" min="0" max="100" step="1" value="5" oninput="updateFromSlider('S2')">
-        <span class="slider-val" id="val-S2-slider">5</span>
-      </div>
-      <button class="btn-run" style="margin-top:6px; width:100%;" onclick="enableAutoSim()">▶ Resume Auto</button>
-
-      <h3 style="margin-top:10px;">📡 Readings</h3>
-      <div class="sensor-values">
-        <div class="sensor-card sensor-T">T: <span id="val-T">--</span>°C</div>
-        <div class="sensor-card sensor-pH">pH: <span id="val-pH">--</span></div>
-        <div class="sensor-card sensor-Oxy">O₂: <span id="val-Oxy">--</span>%</div>
-        <div class="sensor-card sensor-S1">S1: <span id="val-S1">--</span></div>
-        <div class="sensor-card sensor-S2">S2: <span id="val-S2">--</span></div>
+<div id="layout">
+  <!-- ==================== LEFT: TANK + SEQUENCER + CYCLE CONFIG ==================== -->
+  <section class="col" id="leftCol">
+    <div class="panel" id="tankPanel">
+      <h2>Column reactor <span class="mut">live process view</span></h2>
+      <div id="tankWrap" data-phase="IDLE">
+        <svg id="tankSvg" viewBox="0 0 300 344" aria-label="Animated reactor tank">
+          <defs>
+            <clipPath id="vClip"><rect x="80" y="50" width="140" height="240" rx="14"/></clipPath>
+          </defs>
+          <!-- inlet / outlet pipes -->
+          <path class="pipe inletPipe" d="M232,74 L274,74"/>
+          <path class="pipe outletPipe" d="M80,276 L36,276"/>
+          <!-- vessel -->
+          <rect class="vessel" x="80" y="50" width="140" height="240" rx="14"/>
+          <g clip-path="url(#vClip)">
+            <rect id="waterRect" x="80" y="266" width="140" height="224"/>
+            <g id="waveGroup" transform="translate(0,262)">
+              <path id="wave1" class="wave" d="M0,10 Q35,2 70,10 T140,10 T210,10 T280,10 T350,10 T420,10 T490,10 T560,10 T630,10 T700,10 L700,30 L0,30 Z"/>
+              <path id="wave2" class="wave w2" d="M0,10 Q35,16 70,10 T140,10 T210,10 T280,10 T350,10 T420,10 T490,10 T560,10 T630,10 T700,10 L700,28 L0,28 Z"/>
+            </g>
+            <g id="bubbles"></g>
+            <g id="particles"></g>
+          </g>
+          <!-- sonicator probe (top entry) -->
+          <g id="sonicRod">
+            <rect x="146" y="12" width="8" height="62" rx="3" class="rod"/>
+            <rect x="141" y="74" width="18" height="12" rx="3" class="rodTip"/>
+          </g>
+          <!-- heater coil (submerged) -->
+          <circle id="heaterCoil" class="coil" cx="203" cy="270" r="9"/>
+          <!-- acid / base dosing ports -->
+          <rect class="port acidPort" x="62" y="150" width="20" height="8" rx="3"/>
+          <rect class="port basePort" x="218" y="140" width="20" height="8" rx="3"/>
+          <!-- level ticks (75/50/25 %) -->
+          <g class="ticks mono">
+            <line x1="80" x2="224" y1="110" y2="110"/><text x="229" y="113">75</text>
+            <line x1="80" x2="224" y1="170" y2="170"/><text x="229" y="173">50</text>
+            <line x1="80" x2="224" y1="230" y2="230"/><text x="229" y="233">25</text>
+          </g>
+          <rect class="vesselGlass" x="80" y="50" width="140" height="240" rx="14"/>
+        </svg>
+        <div class="actuator" data-act="sonic" id="actSonic" title="Sonicator — Feeding phase only">
+          <svg viewBox="0 0 24 24"><path d="M12 3v7"/><rect x="9.6" y="10" width="4.8" height="4"/><path d="M8.5 17.5a5 5 0 0 1 7 0M6.5 20.5a8 8 0 0 1 11 0"/></svg>
+          <span>Sonicator</span><i class="lamp"></i>
+        </div>
+        <div class="actuator" data-act="heater" id="actHeater" title="Immersion heater">
+          <svg viewBox="0 0 24 24"><path d="M12 3c3.5 3.5-3 5.5.5 9 2 2 2.2 4 .5 6.5"/><path d="M7.5 21.5h9"/><path d="M16.5 5.5c1.5 1.5-1 2.5.5 4.5"/></svg>
+          <span>Heater</span><i class="lamp"></i>
+        </div>
+        <div class="actuator" data-act="acid" id="actAcid" title="Acid dispenser">
+          <svg viewBox="0 0 24 24"><path d="M12 3s6 7 6 11a6 6 0 1 1-12 0c0-4 6-11 6-11z"/><path d="M9.5 14h5"/></svg>
+          <span>Acid</span><i class="lamp"></i>
+        </div>
+        <div class="actuator" data-act="base" id="actBase" title="Base dispenser">
+          <svg viewBox="0 0 24 24"><path d="M12 3s6 7 6 11a6 6 0 1 1-12 0c0-4 6-11 6-11z"/><path d="M9.5 13.2h5M12 10.7v5"/></svg>
+          <span>Base</span><i class="lamp"></i>
+        </div>
+        <div id="tankPhase" class="tank-phase mono">IDLE</div>
       </div>
     </div>
 
-    <div class="panel graph-panel">
-      <h3>📊 Waveform — All Signals</h3>
-      <div class="graph-container">
-        <canvas id="dataGraph" width="600" height="200"></canvas>
+    <div class="panel" id="phasePanel">
+      <h2>Sequencer</h2>
+      <div class="phase-pipeline" id="phasePipeline">
+        <span class="chip" data-ph="FEEDING" style="--pc:#f59e0b">Feeding</span><i>→</i>
+        <span class="chip" data-ph="AERATION" style="--pc:#3b82f6">Aeration</span><i>→</i>
+        <span class="chip" data-ph="SETTLING" style="--pc:#14b8a6">Settling</span><i>→</i>
+        <span class="chip" data-ph="WITHDRAWAL" style="--pc:#a855f7">Withdrawal</span><i>→</i>
+        <span class="chip" data-ph="IDLE" style="--pc:#64748b">Idle</span>
       </div>
+      <div class="phase-now">
+        <div class="ph-row">
+          <span class="ph-name" id="phaseName">—</span>
+          <span class="badge" id="seqBadge">STOPPED</span>
+        </div>
+        <div class="cd-big mono" id="phaseRem">00:00</div>
+        <div class="cd-cap">PHASE REMAINING</div>
+        <div class="cd-bar"><i id="phaseBar"></i></div>
+        <div style="margin-top:8px">
+          <div class="kv"><span>Cycle</span><b class="mono" id="cycleProg">1 / ∞</b></div>
+          <div class="kv"><span>Phase elapsed</span><b class="mono" id="phaseElapsed">00:00</b></div>
+          <div class="kv"><span>Cycle elapsed</span><b class="mono" id="cycleElapsed">00:00</b></div>
+          <div class="kv"><span>Total remaining</span><b class="mono" id="totalRem">00:00</b></div>
+        </div>
+      </div>
+      <div class="seq-controls">
+        <button class="btn primary" id="btnStart" type="button">Start</button>
+        <button class="btn" id="btnPause" type="button">Pause</button>
+        <button class="btn" id="btnStop" type="button">Stop</button>
+        <button class="btn" id="btnReset" type="button">Reset Cycle</button>
+      </div>
+    </div>
+
+    <div class="panel" id="cyclePanel">
+      <h2>Cycle configuration <span class="mut" id="unitHint">seconds · simulator</span></h2>
+      <div class="kv" id="unitRow">
+        <span>Real-mode time unit</span>
+        <select data-setting="unitReal" id="unitSel" style="width:96px">
+          <option value="min">minutes</option><option value="h">hours</option>
+        </select>
+      </div>
+      <div class="dur-grid" id="durGrid">
+        <div><label>Feeding</label><input type="number" data-dur="FEEDING" min="5" max="7200" step="5"><span class="unit">s</span></div>
+        <div><label>Aeration</label><input type="number" data-dur="AERATION" min="5" max="7200" step="5"><span class="unit">s</span></div>
+        <div><label>Settling</label><input type="number" data-dur="SETTLING" min="5" max="7200" step="5"><span class="unit">s</span></div>
+        <div><label>Withdrawal</label><input type="number" data-dur="WITHDRAWAL" min="5" max="7200" step="5"><span class="unit">s</span></div>
+        <div><label>Idle</label><input type="number" data-dur="IDLE" min="5" max="7200" step="5"><span class="unit">s</span></div>
+      </div>
+      <div class="seq-repeat" id="seqRepeat" title="What happens after the Idle phase ends">
+        <label class="ck nowrap"><input type="checkbox" data-setting="seq.loop"><b>Loop ∞</b>&nbsp;— repeat until stopped</label>
+        <label class="ck">Stop after&nbsp;<input type="number" data-setting="seq.cycles" min="1" max="999" step="1" class="w56">&nbsp;cycles (when Loop is off)</label>
+      </div>
+      <div class="kv total"><span>Total cycle</span><b class="mono" id="durTotal">—</b></div>
+      <p class="note hidden" id="durNote">Durations are locked while a cycle is running or paused.</p>
+    </div>
+  </section>
+  <!-- ==================== CENTER: GAUGES + CONTROLLERS ==================== -->
+  <section class="col" id="centerCol">
+    <div class="panel" id="gaugesPanel">
+      <h2>Live sensors <span class="chip-mini sim" id="linkChip">SIMULATED</span></h2>
+      <div class="gauge-grid" id="gaugeGrid">
+
+        <div class="gauge-card" id="card_pH">
+          <div class="g-head"><span class="g-name" id="gname_pH">pH</span><span class="trend flat" id="trend_pH">→</span></div>
+          <canvas id="gauge_pH" class="gauge-cv"></canvas>
+          <div class="g-scale"><span id="gmin_pH">0</span><span id="gmax_pH">14</span></div>
+          <div class="g-read"><b id="val_pH" class="mono">--</b><span class="g-unit" id="gunit_pH"></span></div>
+          <canvas id="spark_pH" class="spark-cv"></canvas>
+          <div class="g-conf">
+            <label class="lbl">label<input type="text" data-setting="gauges.pH.label" style="flex:1"></label>
+            <label class="lbl">unit<input type="text" data-setting="gauges.pH.unit" style="width:44px"></label>
+            <label>min<input type="number" data-setting="gauges.pH.min" step="0.5"></label>
+            <label>max<input type="number" data-setting="gauges.pH.max" step="0.5"></label>
+          </div>
+        </div>
+
+        <div class="gauge-card" id="card_T">
+          <div class="g-head"><span class="g-name" id="gname_T">Temperature</span><span class="trend flat" id="trend_T">→</span></div>
+          <canvas id="gauge_T" class="gauge-cv"></canvas>
+          <div class="g-scale"><span id="gmin_T">0</span><span id="gmax_T">50</span></div>
+          <div class="g-read"><b id="val_T" class="mono">--</b><span class="g-unit" id="gunit_T">°C</span></div>
+          <canvas id="spark_T" class="spark-cv"></canvas>
+          <div class="g-conf">
+            <label class="lbl">label<input type="text" data-setting="gauges.T.label" style="flex:1"></label>
+            <label class="lbl">unit<input type="text" data-setting="gauges.T.unit" style="width:44px"></label>
+            <label>min<input type="number" data-setting="gauges.T.min" step="1"></label>
+            <label>max<input type="number" data-setting="gauges.T.max" step="1"></label>
+          </div>
+        </div>
+
+        <div class="gauge-card" id="card_DO">
+          <div class="g-head"><span class="g-name" id="gname_DO">Dissolved Oxygen</span><span class="trend flat" id="trend_DO">→</span></div>
+          <canvas id="gauge_DO" class="gauge-cv"></canvas>
+          <div class="g-scale"><span id="gmin_DO">0</span><span id="gmax_DO">10</span></div>
+          <div class="g-read"><b id="val_DO" class="mono">--</b><span class="g-unit" id="gunit_DO">mg/L</span></div>
+          <canvas id="spark_DO" class="spark-cv"></canvas>
+          <div class="g-conf">
+            <label class="lbl">label<input type="text" data-setting="gauges.DO.label" style="flex:1"></label>
+            <label class="lbl">unit<input type="text" data-setting="gauges.DO.unit" style="width:44px"></label>
+            <label>min<input type="number" data-setting="gauges.DO.min" step="0.5"></label>
+            <label>max<input type="number" data-setting="gauges.DO.max" step="0.5"></label>
+          </div>
+        </div>
+
+        <div class="gauge-card" id="card_S1">
+          <div class="g-head"><span class="g-name" id="gname_S1">S1 (user sensor)</span><span class="trend flat" id="trend_S1">→</span></div>
+          <canvas id="gauge_S1" class="gauge-cv"></canvas>
+          <div class="g-scale"><span id="gmin_S1">0</span><span id="gmax_S1">100</span></div>
+          <div class="g-read"><b id="val_S1" class="mono">--</b><span class="g-unit" id="gunit_S1">au</span></div>
+          <canvas id="spark_S1" class="spark-cv"></canvas>
+          <div class="g-conf">
+            <label class="lbl">label<input type="text" data-setting="gauges.S1.label" style="flex:1"></label>
+            <label class="lbl">unit<input type="text" data-setting="gauges.S1.unit" style="width:44px"></label>
+            <label>min<input type="number" data-setting="gauges.S1.min" step="1"></label>
+            <label>max<input type="number" data-setting="gauges.S1.max" step="1"></label>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="panel" id="ctrlPanel">
+      <h2>Controllers <span class="warn hidden" id="phWarn">acid SP must exceed base SP</span></h2>
+      <div class="interlock mono" id="interlockBar">interlocks: ACID / BASE mutual exclusion · relay guard 3.0 s</div>
+      <div class="ctrl-grid">
+
+        <div class="ctrl-card" data-c="sonic">
+          <div class="c-head"><i class="lamp" id="lamp_sonic"></i><b>Sonicator</b><span class="ph-note">Feeding only</span></div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.sonic.en">enabled</label>
+          <div class="c-fields">
+            <label>ON&nbsp;s<input type="number" data-setting="ctrl.sonic.sp" min="1" max="3600" step="1"></label>
+            <label>OFF&nbsp;s<input type="number" data-setting="ctrl.sonic.db" min="0" max="3600" step="1"></label>
+          </div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.sonic.man">manual ON (in Feeding)</label>
+          <div class="c-state mono" id="st_sonic">OFF</div>
+        </div>
+
+        <div class="ctrl-card" data-c="heater">
+          <div class="c-head"><i class="lamp" id="lamp_heater"></i><b>Heater</b><span class="ph-note">all phases</span></div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.heater.en">enabled</label>
+          <div class="c-fields">
+            <label>SP&nbsp;°C<input type="number" data-setting="ctrl.heater.sp" min="5" max="45" step="0.1"></label>
+            <label>DB&nbsp;°C<input type="number" data-setting="ctrl.heater.db" min="0" max="5" step="0.05"></label>
+          </div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.heater.man">manual ON (override)</label>
+          <div class="c-state mono" id="st_heater">OFF</div>
+        </div>
+
+        <div class="ctrl-card" data-c="acid">
+          <div class="c-head"><i class="lamp" id="lamp_acid"></i><b>Acid dispenser</b><span class="ph-note">pH &gt; high SP</span></div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.acid.en">enabled</label>
+          <div class="c-fields">
+            <label>SP&nbsp;pH<input type="number" data-setting="ctrl.acid.sp" min="2" max="12" step="0.1"></label>
+            <label>DB&nbsp;pH<input type="number" data-setting="ctrl.acid.db" min="0" max="2" step="0.05"></label>
+          </div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.acid.man">manual ON (override)</label>
+          <div class="c-state mono" id="st_acid">OFF</div>
+        </div>
+
+        <div class="ctrl-card" data-c="base">
+          <div class="c-head"><i class="lamp" id="lamp_base"></i><b>Base dispenser</b><span class="ph-note">pH &lt; low SP</span></div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.base.en">enabled</label>
+          <div class="c-fields">
+            <label>SP&nbsp;pH<input type="number" data-setting="ctrl.base.sp" min="2" max="12" step="0.1"></label>
+            <label>DB&nbsp;pH<input type="number" data-setting="ctrl.base.db" min="0" max="2" step="0.05"></label>
+          </div>
+          <label class="ck"><input type="checkbox" data-setting="ctrl.base.man">manual ON (override)</label>
+          <div class="c-state mono" id="st_base">OFF</div>
+        </div>
+
+        <div class="ctrl-card" data-c="watch">
+          <div class="c-head"><i class="lamp" id="lamp_watch"></i><b>Watch levels</b><span class="ph-note">alarms</span></div>
+          <label class="ck"><input type="checkbox" data-setting="watch.DO.en">DO low alarm&nbsp;
+            <input type="number" data-setting="watch.DO.sp" min="0" max="12" step="0.1" style="width:56px">&nbsp;mg/L
+          </label>
+          <label class="ck"><input type="checkbox" data-setting="watch.S1.en">S1 high alarm&nbsp;
+            <input type="number" data-setting="watch.S1.sp" min="0" max="100" step="1" style="width:56px">&nbsp;au
+          </label>
+          <div class="c-state mono" id="st_watch">no alarm</div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== RIGHT: PLOTS + LOG + SERIAL ==================== -->
+  <section class="col" id="rightCol">
+    <div class="panel" id="chartsPanel">
+      <h2>History <span class="mut">process time</span>
+        <select data-setting="chartWindow" id="chartWinSel" style="margin-left:auto">
+          <option value="120">last 2 min</option>
+          <option value="600">last 10 min</option>
+          <option value="1800">last 30 min</option>
+          <option value="0">all</option>
+        </select>
+      </h2>
+      <div class="chart-card"><div class="ch-title"><span id="cht_pH">pH</span><span class="mut" id="chu_pH"></span></div><div class="chart-box"><canvas id="ch_pH"></canvas></div></div>
+      <div class="chart-card"><div class="ch-title"><span id="cht_T">Temperature</span><span class="mut" id="chu_T">°C</span></div><div class="chart-box"><canvas id="ch_T"></canvas></div></div>
+      <div class="chart-card"><div class="ch-title"><span id="cht_DO">Dissolved Oxygen</span><span class="mut" id="chu_DO">mg/L</span></div><div class="chart-box"><canvas id="ch_DO"></canvas></div></div>
+      <div class="chart-card"><div class="ch-title"><span id="cht_S1">S1</span><span class="mut" id="chu_S1">au</span></div><div class="chart-box"><canvas id="ch_S1"></canvas></div></div>
+      <div id="chartsNA" class="note hidden">Chart.js CDN unreachable — history plots disabled (offline?). Gauges, control and logging still work.</div>
+    </div>
+
+    <div class="panel" id="logPanel">
+      <h2>Data log <span class="mut" id="rowCount">0 rows</span></h2>
+      <div class="log-controls">
+        <label>log every <input type="number" data-setting="log.interval" min="1" max="3600" step="1" class="w56"> s (process time)</label>
+        <div class="col-checks">
+          <label class="ck"><input type="checkbox" data-setting="log.cols.pH">pH</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.T">temp</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.DO">DO</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.S1">S1</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.heater">heater</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.acid">acid</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.base">base</label>
+          <label class="ck"><input type="checkbox" data-setting="log.cols.sonic">sonicator</label>
+        </div>
+        <div class="log-btns">
+          <button class="btn primary" id="btnLog" type="button">Start logging</button>
+          <button class="btn" id="btnCsv" type="button">Download CSV</button>
+          <button class="btn ghost" id="btnLogClear" type="button">Clear</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="logTable" class="mono"></table></div>
+    </div>
+
+    <div class="panel" id="serialPanel">
+      <h2>Serial link <span class="mut">Web Serial API</span></h2>
+      <div class="serial-row">
+        <button class="btn" id="btnChoosePort" type="button">Choose port…</button>
+        <select data-setting="serial.baud" id="baudSel" title="Baud rate">
+          <option value="9600">9600</option><option value="19200">19200</option>
+          <option value="38400">38400</option><option value="57600">57600</option>
+          <option value="115200">115200</option><option value="230400">230400</option>
+        </select>
+        <button class="btn primary" id="btnConnect" type="button">Connect</button>
+        <label class="ck"><input type="checkbox" data-setting="serial.auto">auto-reconnect</label>
+      </div>
+      <div class="serial-status mono" id="serialStatus">offline</div>
+      <div class="mon-head"><span>Raw monitor — TX / RX</span>
+        <button class="btn ghost sq" id="btnMonClear" type="button" title="Clear monitor">✕</button>
+      </div>
+      <div id="serialMon" class="mono"></div>
+      <details class="proto">
+        <summary>Line protocol (LF-terminated ASCII)</summary>
+        <pre>device → host (1–5 Hz):  pH:7.21,T:24.5,DO:6.3,S1:0
+host → device (on change): HEATER:1 | SONICATOR:0 | ACID:0 | BASE:1
+parser tolerates key order / spacing / unknown keys.</pre>
+      </details>
+    </div>
+  </section>
+</div><!-- /layout -->
+
+<div id="toasts"></div>
+
+<!-- generic confirm dialog -->
+<div id="modalOverlay" class="hidden">
+  <div class="dialog" role="dialog" aria-modal="true">
+    <h3 id="modalTitle">Confirm</h3>
+    <div id="modalBody"></div>
+    <div class="dlg-actions">
+      <button class="btn" id="modalCancel" type="button">Cancel</button>
+      <button class="btn primary" id="modalOk" type="button">OK</button>
     </div>
   </div>
 </div>
 
+<!-- help / setup notes dialog -->
+<div id="helpOverlay" class="hidden">
+  <div class="dialog help-body" role="dialog" aria-modal="true">
+    <h3>Help · Setup · Protocol</h3>
+    <h4>Browser requirements</h4>
+    <ul>
+      <li>Chromium-based <b>Chrome / Edge 89+</b> (Web Serial). Firefox/Safari: simulator works, serial disabled.</li>
+      <li>Web Serial needs a <b>secure context</b>: <code>https://</code>, <code>localhost</code>, or opening this HTML file directly (<code>file://</code>).</li>
+      <li>On Linux add your user to the <code>dialout</code> group to access USB serial adapters.</li>
+    </ul>
+    <h4>Simulator quick start (no hardware)</h4>
+    <ul>
+      <li>Mode is <b>Simulator</b> by default: durations are in <b>seconds</b>, accelerated ×10 (select ×1 / ×10 / ×60).</li>
+      <li>Press <b>Start</b> → confirm → the batch runs Feeding → Aeration → Settling → Withdrawal → Idle, then <b>repeats</b>: <b>Loop ∞</b> runs until Stop/Pause, or a fixed cycle count — set in <b>Cycle configuration</b>.</li>
+      <li>All inputs (durations, setpoints, gauge ranges, logging) persist in <code>localStorage</code>.</li>
+    </ul>
+    <h4>Connecting real hardware</h4>
+    <ul>
+      <li>USB-serial bridge (CP210x / FTDI / CH340) — click <b>Choose port…</b>, pick the device, select baud, <b>Connect</b>.</li>
+      <li>Switch mode to <b>Real</b>: durations are entered in minutes (or hours). Time scale is 1×.</li>
+      <li>Switch to <b>Real</b> before starting. Mode is locked while a cycle runs.</li>
+    </ul>
+    <h4>Serial protocol</h4>
+    <pre>device → host (1–5 Hz, LF-terminated):
+  pH:7.21,T:24.5,DO:6.3,S1:0
+
+host → device (sent on every actuator change):
+  HEATER:1   HEATER:0
+  SONICATOR:1   SONICATOR:0
+  ACID:1   ACID:0
+  BASE:1   BASE:0</pre>
+    <p>A full Arduino example is in <code>README.md</code> shipped with this dashboard.</p>
+    <h4>Control logic</h4>
+    <ul>
+      <li><b>Heater</b>: ON when T &lt; SP − DB, OFF when T &gt; SP + DB (hysteresis).</li>
+      <li><b>Acid</b>: ON when pH &gt; SP + DB, OFF when pH &lt; SP − DB. <b>Base</b>: mirrored below its SP.</li>
+      <li><b>Interlocks</b>: acid and base never run together; every relay observes a minimum OFF-time; sonicator is hard-gated to Feeding and duty-cycles (ON s / OFF s).</li>
+      <li><b>E-STOP</b>: kills all outputs instantly (bypasses relay guard) and halts the sequence; latch must be cleared manually.</li>
+    </ul>
+    <div class="dlg-actions"><button class="btn primary" id="btnHelpClose" type="button">Close</button></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
-const state = {
-  phase: 'IDLE', running: false, paused: false, level: 0, sludgeHeight: 0,
-  logEnabled: false, logFrequency: 1, lastLogTime: 0, cycleStartTime: null,
-  phaseStartTime: null, phaseDurationMs: 0, phaseRemaining: 0,
-  dataLog: [], manualMode: false,
-  sensors: {
-    T: { val: 24, color: '#ff4444', label: 'T', scale: 1, offset: 0 },
-    pH: { val: 7.5, color: '#00aa00', label: 'pH', scale: 100/14, offset: 0 },
-    Oxy: { val: 10, color: '#ff6600', label: 'O₂', scale: 1, offset: 0 },
-    S1: { val: 5, color: '#9933cc', label: 'S1', scale: 1, offset: 0 },
-    S2: { val: 5, color: '#3366cc', label: 'S2', scale: 1, offset: 0 }
+'use strict';
+/* ==========================================================================
+   SECTION 0 · UTILITIES & PERSISTENT SETTINGS
+   ========================================================================== */
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const pad2  = n => String(n).padStart(2, '0');
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+/* h:mm:ss / mm:ss formatting for countdowns and chart axes */
+function fmtHMS(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return h > 0 ? `${h}:${pad2(m)}:${pad2(x)}` : `${pad2(m)}:${pad2(x)}`;
+}
+function fmtWall(d) { d = d || new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function fmtStamp(d) {
+  d = d || new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
+         `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+}
+function downloadFile(name, text, mime) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: mime || 'text/csv' }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1200);
+}
+function getPath(o, p) { return p.split('.').reduce((a, k) => (a == null ? a : a[k]), o); }
+function setPath(o, p, v) {
+  const ks = p.split('.'); const last = ks.pop();
+  ks.reduce((a, k) => a[k], o)[last] = v;
+}
+
+/* ---------------- Settings (localStorage, v1 schema) ---------------- */
+const LS_KEY = 'sbcr.settings.v1';
+const DEFAULTS = {
+  v: 1,
+  mode: 'sim',            // 'sim' | 'real'
+  timeScale: 10,          // sim acceleration: 1 | 10 | 60
+  unitReal: 'min',        // real-mode duration unit: 'min' | 'h'
+  chartWindow: 600,       // chart x-window in process-seconds (0 = all)
+  minOff: 3,              // relay guard: min seconds between toggles (process time)
+  seq: { cycles: 1, loop: true },  // what happens after Idle: fixed cycle count, or ∞ loop until Stop
+  durSim:  { FEEDING: 60, AERATION: 90, SETTLING: 90, WITHDRAWAL: 60, IDLE: 30 },   // seconds
+  durReal: { FEEDING: 15, AERATION: 30, SETTLING: 30, WITHDRAWAL: 15, IDLE: 5 },    // min or h
+  gauges: {
+    pH: { min: 0,  max: 14,  label: 'pH',                unit: ''     },
+    T:  { min: 0,  max: 50,  label: 'Temperature',      unit: '°C'   },
+    DO: { min: 0,  max: 10,  label: 'Dissolved Oxygen', unit: 'mg/L' },
+    S1: { min: 0,  max: 100, label: 'S1 (user sensor)', unit: 'au'   }
   },
-  phases: ['FEED', 'AERATION', 'SETTLING', 'WITHDRAWAL', 'IDLE'],
-  phaseIndex: 0, timeHistory: [0],
-  sensorHistory: { T: [24], pH: [7.5], Oxy: [10], S1: [5], S2: [5] },
-  bubbleInterval: null, sludgeInterval: null
+  ctrl: {   // controller config: en = enable, sp = setpoint, db = deadband, man = manual override
+    heater: { en: true, sp: 24,   db: 0.5, man: false },
+    acid:   { en: true, sp: 8.0,  db: 0.2, man: false },
+    base:   { en: true, sp: 6.5,  db: 0.2, man: false },
+    sonic:  { en: true, sp: 10,   db: 5,   man: false }   // sp = ON seconds, db = OFF seconds (duty cycle)
+  },
+  watch: { DO: { en: true, sp: 2 }, S1: { en: true, sp: 80 } },  // sensor alarms (no actuator)
+  log:  { interval: 5, cols: { pH: true, T: true, DO: true, S1: true, heater: true, acid: true, base: true, sonic: true } },
+  serial: { baud: 115200, auto: true }
 };
 
-const gaugeCanvas = document.getElementById('mainGauge');
-const gaugeCtx = gaugeCanvas.getContext('2d');
-const graphCanvas = document.getElementById('dataGraph');
-const graphCtx = graphCanvas.getContext('2d');
-
-// === DRAW GAUGE ===
-function drawGauge() {
-  const w = gaugeCanvas.width;
-  const h = gaugeCanvas.height;
-  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 10;
-  gaugeCtx.clearRect(0, 0, w, h);
-  
-  gaugeCtx.beginPath();
-  gaugeCtx.arc(cx, cy, r, Math.PI * 0.7, Math.PI * 2.3);
-  gaugeCtx.lineWidth = 14; gaugeCtx.strokeStyle = '#e0e0e0'; gaugeCtx.stroke();
-  
-  drawArc(cx, cy, r, 0, 25, '#00aa00');
-  drawArc(cx, cy, r, 25, 50, '#cccc00');
-  drawArc(cx, cy, r, 50, 75, '#ff6600');
-  drawArc(cx, cy, r, 75, 100, '#dd0000');
-  
-  gaugeCtx.font = '9px Arial'; gaugeCtx.fillStyle = '#333';
-  for (let i = 0; i <= 100; i += 20) {
-    const ang = Math.PI * 0.7 + (i / 100) * Math.PI * 1.3;
-    const iX = cx + Math.cos(ang) * (r - 20);
-    const iY = cy + Math.sin(ang) * (r - 20);
-    gaugeCtx.fillText(i.toString(), iX - 6, iY + 3);
+function deepMerge(base, over) {
+  for (const k of Object.keys(over)) {
+    const o = over[k], b = base[k];
+    if (o && typeof o === 'object' && !Array.isArray(o) && b && typeof b === 'object' && !Array.isArray(b)) deepMerge(b, o);
+    else if (k in base) base[k] = o;
   }
-  
-  const needles = [
-    { k: 'T', o: -15, s: 1 },
-    { k: 'pH', o: -5, s: 100/14 },
-    { k: 'Oxy', o: 5, s: 1 },
-    { k: 'S1', o: 15, s: 1 }
-  ];
-  needles.forEach(n => {
-    const pct = Math.min(100, Math.max(0, state.sensors[n.k].val * n.s));
-    drawNeedle(cx, cy, r - 25, pct, state.sensors[n.k].color, n.o);
-  });
-  
-  gaugeCtx.beginPath();
-  gaugeCtx.arc(cx, cy, 8, 0, Math.PI * 2);
-  gaugeCtx.fillStyle = '#333'; gaugeCtx.fill();
+  return base;
 }
-function drawArc(cx, cy, r, sP, eP, c) {
-  const a1 = Math.PI * 0.7 + (sP / 100) * Math.PI * 1.3;
-  const a2 = Math.PI * 0.7 + (eP / 100) * Math.PI * 1.3;
-  gaugeCtx.beginPath(); gaugeCtx.arc(cx, cy, r, a1, a2);
-  gaugeCtx.lineWidth = 14; gaugeCtx.strokeStyle = c; gaugeCtx.stroke();
+function loadSettings() {
+  let s = JSON.parse(JSON.stringify(DEFAULTS));
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) s = deepMerge(s, JSON.parse(raw));
+  } catch (e) { console.warn('settings load failed', e); }
+  /* Safety: manual overrides are NEVER restored from storage — the operator
+     must consciously re-engage them after a page reload. */
+  for (const k of Object.keys(s.ctrl)) s.ctrl[k].man = false;
+  return s;
 }
-function drawNeedle(cx, cy, len, pct, col, off) {
-  const ang = Math.PI * 0.7 + (pct / 100) * Math.PI * 1.3 + (off * Math.PI / 180);
-  gaugeCtx.beginPath(); gaugeCtx.moveTo(cx, cy);
-  gaugeCtx.lineTo(cx + Math.cos(ang) * len, cy + Math.sin(ang) * len);
-  gaugeCtx.strokeStyle = col; gaugeCtx.lineWidth = 2; gaugeCtx.stroke();
+let settings = loadSettings();
+let _saveT = null;
+function saveSettings() {   // debounced; manual overrides stripped before persisting
+  clearTimeout(_saveT);
+  _saveT = setTimeout(() => {
+    try {
+      const s = JSON.parse(JSON.stringify(settings));
+      for (const k of Object.keys(s.ctrl)) delete s.ctrl[k].man;
+      localStorage.setItem(LS_KEY, JSON.stringify(s));
+    } catch (e) { console.warn('settings save failed', e); }
+  }, 250);
 }
 
-// === DRAW GRAPH — ALWAYS UPDATES, INDEPENDENT OF LOGGING ===
-function drawGraph() {
-  const w = graphCanvas.width;
-  const h = graphCanvas.height;
-  const padL = 35, padR = 50, padT = 8, padB = 20;
-  const gw = w - padL - padR;
-  const gh = h - padT - padB;
-  
-  graphCtx.clearRect(0, 0, w, h);
-  graphCtx.fillStyle = '#fff';
-  graphCtx.fillRect(0, 0, w, h);
-  
-  // Grid lines
-  graphCtx.strokeStyle = '#e0e0e0';
-  graphCtx.lineWidth = 1;
-  for (let i = 0; i <= 100; i += 20) {
-    const y = padT + gh * (1 - i / 100);
-    graphCtx.beginPath();
-    graphCtx.moveTo(padL, y);
-    graphCtx.lineTo(padL + gw, y);
-    graphCtx.stroke();
-    graphCtx.fillStyle = '#666';
-    graphCtx.font = '9px Arial';
-    graphCtx.fillText(i.toString(), 5, y + 3);
+/* ==========================================================================
+   SECTION 1 · GLOBAL STATE + CENTRAL CLOCK
+   --------------------------------------------------------------------------
+   ALL process timing is derived from ONE central clock (Clock.tick, driven by
+   a single setInterval). dt is measured against Date.now(), so even when the
+   browser throttles background timers the accumulated process time stays
+   drift-free. process time advances by  dtReal × timeScale  in simulator
+   mode and  dtReal × 1  in real mode.  A separate requestAnimationFrame loop
+   (see Section 9) handles cosmetic interpolation only — it never advances
+   process state, so no timer in the app can drift relative to another.
+   ========================================================================== */
+const PHASES = ['FEEDING', 'AERATION', 'SETTLING', 'WITHDRAWAL', 'IDLE'];
+const PHASE_META = {
+  FEEDING:    { label: 'Feeding',    color: '#f59e0b' },
+  AERATION:   { label: 'Aeration',   color: '#3b82f6' },
+  SETTLING:   { label: 'Settling',   color: '#14b8a6' },
+  WITHDRAWAL: { label: 'Withdrawal', color: '#a855f7' },
+  IDLE:       { label: 'Idle',       color: '#64748b' }
+};
+const SKEYS = ['pH', 'T', 'DO', 'S1'];
+const DEC = { pH: 2, T: 1, DO: 2, S1: 0 };                       // display decimals
+const GAUGE_COLORS = { pH: '#38bdf8', T: '#fb923c', DO: '#4ade80', S1: '#e879f9' };
+const PHYS = { pH: [0, 14], T: [-10, 60], DO: [0, 20], S1: [0, 100] };  // hard physical bounds
+
+const App = {
+  mode: settings.mode,   // 'sim' | 'real'
+  paused: false,         // gates sequencer + simulator + logger (clock keeps ticking for UI)
+  estop: false,          // latched emergency stop
+  processTime: 0,        // seconds of process time since page load
+  started: false         // has a cycle been started (drives tank initial state)
+};
+
+const Clock = {
+  _last: Date.now(),
+  start() { setInterval(() => this.tick(), 100); },
+  tick() {
+    const now = Date.now();
+    let dt = (now - this._last) / 1000;
+    this._last = now;
+    if (dt <= 0) return;
+    if (dt > 5) { console.warn('clock jump clamped:', dt.toFixed(1), 's'); dt = 5; }
+    const scale = (App.mode === 'sim') ? (+settings.timeScale || 1) : 1;
+    const dtP = App.paused ? 0 : dt * scale;   // process-time delta for this tick
+    if (dtP > 0) {
+      App.processTime += dtP;
+      Sequencer.tick(dtP);                     // 2 · phase state machine
+      if (App.mode === 'sim') Simulator.update(dtP);  // 4 · sensor physics (sim only)
+      Controllers.update(dtP);                 // 5 · control loop (2 Hz process time)
+      Sensors.sampler(dtP);                    // 3 · history sampling
+      Logger.tick(dtP);                        // 6 · data logging
+    }
+    Serial.watchdog();                         // 8 · telemetry staleness (real mode)
   }
-  
-  // Axis border
-  graphCtx.strokeStyle = '#888';
-  graphCtx.lineWidth = 1;
-  graphCtx.strokeRect(padL, padT, gw, gh);
-  
-  if (state.timeHistory.length < 2) {
-    graphCtx.fillStyle = '#999';
-    graphCtx.font = '11px Arial';
-    graphCtx.fillText('Press Run to start plotting...', w/2 - 75, h/2);
-  } else {
-    const t0 = state.timeHistory[0];
-    const t1 = state.timeHistory[state.timeHistory.length - 1];
-    const timeSpan = Math.max(1, t1 - t0);
-    
-    const keys = ['T', 'pH', 'Oxy', 'S1', 'S2'];
-    keys.forEach(key => {
-      graphCtx.beginPath();
-      graphCtx.strokeStyle = state.sensors[key].color;
-      graphCtx.lineWidth = 2;
-      
-      for (let i = 0; i < state.timeHistory.length; i++) {
-        const t = state.timeHistory[i];
-        let val = state.sensorHistory[key][i];
-        if (key === 'pH') val = (val / 14) * 100;
-        val = Math.max(0, Math.min(100, val));
-        
-        const x = padL + gw * ((t - t0) / timeSpan);
-        const y = padT + gh * (1 - val / 100);
-        
-        i === 0 ? graphCtx.moveTo(x, y) : graphCtx.lineTo(x, y);
+};
+
+/* ==========================================================================
+   SECTION 2 · CYCLE SEQUENCER
+   --------------------------------------------------------------------------
+   State machine:  STOPPED ──start(confirm)──► RUNNING ⇄ PAUSED
+                   RUNNING ──Idle done, more cycles queued──► RUNNING (cycle k+1)
+                   RUNNING ──last cycle done──► FINISHED
+                   any state ──E-STOP──► STOPPED + latched estop flag
+   REPETITION (Cycle configuration): "Loop ∞" restarts the 5-phase sequence
+   at Feeding as soon as Idle completes and keeps running until the operator
+   presses Stop / Pause / E-STOP; otherwise a fixed number of cycles runs
+   and the sequencer enters FINISHED automatically.
+   PHASE TRANSITIONS are purely countdown-driven: tick(dt) accumulates
+   process-seconds; when phaseElapsed reaches the phase duration the excess
+   is *carried over* into the next phase (so boundaries stay exact even with
+   coarse ticks or large time-scales), a chart marker event is recorded, and
+   the tank captures its current level as the baseline for the new phase.
+   Durations are re-read from settings at Start; they are locked while
+   RUNNING/PAUSED so a running batch cannot be re-timed mid-flight.
+   ========================================================================== */
+const Sequencer = {
+  state: 'STOPPED',          // STOPPED | RUNNING | PAUSED | FINISHED
+  phaseIdx: 0,
+  phElapsed: 0,              // process-seconds inside current phase
+  totalElapsed: 0,           // process-seconds inside current cycle
+  cyclesDone: 0,             // fully completed cycles since Start
+  cyclesTarget: 1,           // cycles per Start (Infinity = loop until Stop/Pause)
+  dur: [60, 90, 90, 60, 30], // phase durations in process-seconds (loaded at Start)
+
+  durationsSec() {
+    const d = (App.mode === 'sim') ? settings.durSim : settings.durReal;
+    const f  = (App.mode === 'sim') ? 1 : (settings.unitReal === 'h' ? 3600 : 60);
+    return PHASES.map(p => Math.max(1, (+d[p] || 0)) * f);
+  },
+  loadDurations() { this.dur = this.durationsSec(); },
+  /* repeat plan from current settings (used for display before Start) */
+  plannedTarget() {
+    return settings.seq.loop ? Infinity : Math.max(1, Math.round(+settings.seq.cycles || 1));
+  },
+
+  start() {
+    if (App.estop || this.state === 'RUNNING' || this.state === 'PAUSED') return;
+    this.loadDurations();
+    /* repeat plan is read at Start and locked while running: ∞ loop until the
+       operator stops it, or a fixed number of cycles followed by FINISHED */
+    this.cyclesTarget = this.plannedTarget();
+    this.cyclesDone = 0;
+    this.phaseIdx = 0; this.phElapsed = 0; this.totalElapsed = 0;
+    App.paused = false; App.started = true;
+    this.state = 'RUNNING';
+    Charts.addPhaseEvent(App.processTime, PHASES[0]);
+    Tank.captureLevel();
+    UI.onSeqState(); UI.onPhaseChange();
+    const plan = isFinite(this.cyclesTarget)
+      ? (this.cyclesTarget > 1 ? `${this.cyclesTarget} cycles` : 'single cycle')
+      : 'continuous loop until Stop';
+    UI.serialMonitor('sys', `CYCLE START — ${PHASE_META.FEEDING.label} · ${plan} · ${fmtHMS(this.totalDur())} / cycle`);
+  },
+  pause()  { if (this.state === 'RUNNING') { this.state = 'PAUSED'; App.paused = true;  UI.onSeqState(); UI.serialMonitor('sys', 'SEQUENCE PAUSED'); } },
+  resume() { if (this.state === 'PAUSED')  { this.state = 'RUNNING'; App.paused = false; UI.onSeqState(); UI.serialMonitor('sys', 'SEQUENCE RESUMED'); } },
+  stop()   {
+    if (this.state === 'RUNNING' || this.state === 'PAUSED') {
+      this.state = 'STOPPED'; App.paused = false;
+      UI.onSeqState(); UI.onPhaseChange();
+      UI.serialMonitor('sys', 'SEQUENCE STOPPED by operator');
+    }
+  },
+  reset() {
+    this.state = 'STOPPED'; this.phaseIdx = 0; this.phElapsed = 0; this.totalElapsed = 0;
+    this.cyclesDone = 0; this.cyclesTarget = 1;
+    App.paused = false; App.started = false;
+    Tank.reset();
+    UI.onSeqState(); UI.onPhaseChange();
+    UI.serialMonitor('sys', 'CYCLE RESET');
+  },
+  halt() { // used by E-stop: freeze where we are, no resume
+    if (this.state === 'RUNNING' || this.state === 'PAUSED') this.state = 'STOPPED';
+    App.paused = false;
+  },
+
+  tick(dt) {
+    if (this.state !== 'RUNNING') return;
+    this.phElapsed += dt;
+    this.totalElapsed += dt;
+    /* ---- phase transition loop: carry-over keeps boundaries exact ---- */
+    let guard = 0;
+    while (this.state === 'RUNNING' && this.phElapsed >= this.dur[this.phaseIdx]) {
+      this.phElapsed -= this.dur[this.phaseIdx];
+      if (this.phaseIdx >= PHASES.length - 1) { this.finish(); return; }
+      this.phaseIdx++;
+      Charts.addPhaseEvent(App.processTime, PHASES[this.phaseIdx]);
+      Tank.captureLevel();
+      UI.onPhaseChange();
+      UI.serialMonitor('sys', `PHASE → ${PHASE_META[PHASES[this.phaseIdx]].label.toUpperCase()}`);
+      if (++guard > 10) break; // safety against pathological dt
+    }
+  },
+  /* Called when the Idle phase completes. In loop / multi-cycle mode the run
+     restarts at Feeding with state still RUNNING — Pause, Stop and E-STOP
+     semantics are therefore identical in the middle of any cycle. Only when
+     the last queued cycle finishes does the state machine enter FINISHED. */
+  finish() {
+    this.cyclesDone++;
+    if (this.cyclesDone < this.cyclesTarget) {
+      this.phaseIdx = 0; this.phElapsed = 0; this.totalElapsed = 0;
+      Charts.addPhaseEvent(App.processTime, PHASES[0]);
+      Tank.captureLevel();
+      UI.onPhaseChange();
+      UI.serialMonitor('sys', `CYCLE ${this.cyclesDone} COMPLETE — starting cycle ${this.cyclesDone + 1}${isFinite(this.cyclesTarget) ? ' / ' + this.cyclesTarget : ' (continuous loop)'}`);
+      toast(`Cycle ${this.cyclesDone} done — starting ${this.cyclesDone + 1}`, 'ok');
+      return;
+    }
+    this.state = 'FINISHED'; App.paused = false; this.phElapsed = 0;
+    UI.onSeqState(); UI.onPhaseChange();
+    const msg = this.cyclesDone > 1 ? `ALL ${this.cyclesDone} CYCLES COMPLETE` : 'CYCLE COMPLETE';
+    UI.serialMonitor('sys', msg);
+    toast(this.cyclesDone > 1 ? `${this.cyclesDone} cycles complete` : 'Cycle complete', 'ok');
+  },
+
+  phase()          { return PHASES[this.phaseIdx]; },
+  running()        { return this.state === 'RUNNING' || this.state === 'PAUSED'; },
+  phaseRemaining() { return Math.max(0, this.dur[this.phaseIdx] - this.phElapsed); },
+  totalDur()       { return this.dur.reduce((a, b) => a + b, 0); },
+  /* remaining process time across ALL queued cycles (∞ while looping).
+     Before Start the *configured* plan is used so the display matches the
+     "Cycle k / N" readout; after Start the plan locked at Start applies. */
+  totalRemaining() {
+    const ct = App.started ? this.cyclesTarget : this.plannedTarget();
+    if (!isFinite(ct)) return Infinity;
+    return Math.max(0, (ct - 1 - this.cyclesDone) * this.totalDur() +
+                            (this.totalDur() - this.totalElapsed));
+  }
+};
+
+/* ==========================================================================
+   SECTION 3 · SENSORS  (values + history + trends)
+   In simulator mode values are written by the Simulator each physics step;
+   in real mode they arrive from Serial telemetry (Section 8). Everything
+   downstream (gauges, charts, controllers, logger) reads from here.
+   ========================================================================== */
+const Sensors = {
+  vals:  { pH: 7.40, T: 22.5, DO: 2.00, S1: 12 },
+  hist:  { pH: [], T: [], DO: [], S1: [] },   // 1 Hz process-samples {t,v}, capped 900
+  spark: { pH: [], T: [], DO: [], S1: [] },   // 0.5 Hz samples for sparklines, capped 90
+  trend: { pH: 0, T: 0, DO: 0, S1: 0 },       // +1 rising / 0 stable / -1 falling
+  _accS: 0, _accSp: 0,
+  gotReal: false,        // has real telemetry ever arrived this session?
+  stale: true,           // real mode: no fresh telemetry?
+  lastRxWall: 0,
+
+  ingest(o, src) {
+    for (const k of SKEYS) {
+      if (Number.isFinite(o[k])) this.vals[k] = clamp(o[k], PHYS[k][0], PHYS[k][1]);
+    }
+    if (src === 'serial') { this.gotReal = true; this.stale = false; this.lastRxWall = Date.now(); }
+  },
+
+  /* fixed-rate sampling keeps chart data spacing uniform regardless of
+     simulation speed or telemetry jitter */
+  sampler(dtP) {
+    this._accSp += dtP; this._accS += dtP;
+    if (this._accSp >= 0.5) {
+      this._accSp = 0;
+      for (const k of SKEYS) {
+        this.spark[k].push({ t: App.processTime, v: this.vals[k] });
+        if (this.spark[k].length > 90) this.spark[k].shift();
       }
-      graphCtx.stroke();
+    }
+    if (this._accS >= 1) {
+      this._accS = 0;
+      for (const k of SKEYS) {
+        this.hist[k].push({ t: App.processTime, v: this.vals[k] });
+        if (this.hist[k].length > 900) this.hist[k].shift();
+      }
+      this.computeTrends();
+    }
+  },
+  /* trend = slope over the last ~6 process-seconds of 1 Hz history */
+  computeTrends() {
+    const TH = { pH: 0.008, T: 0.03, DO: 0.03, S1: 0.15 };
+    for (const k of SKEYS) {
+      const h = this.hist[k];
+      if (h.length < 7) { this.trend[k] = 0; continue; }
+      const a = h[h.length - 7], b = h[h.length - 1];
+      const slope = (b.v - a.v) / Math.max(1e-6, b.t - a.t);
+      this.trend[k] = slope > TH[k] ? 1 : (slope < -TH[k] ? -1 : 0);
+    }
+  },
+  /* watchdog: real-mode link considered stale without telemetry for 5 s */
+  checkStale() {
+    if (!this.stale && Date.now() - this.lastRxWall > 5000) {
+      this.stale = true;
+      UI.serialMonitor('sys', 'telemetry stale (>5 s) — control loop suspended');
+    }
+  }
+};
+/* ==========================================================================
+   SECTION 4 · SIMULATOR  (realistic sensor dynamics, sim mode only)
+   --------------------------------------------------------------------------
+   First-order physics, integrated at fixed 0.1 s process-steps so behaviour
+   is identical at 1× / 10× / 60× time-scale:
+     · Temperature — heater drives T toward T_HEAT (first-order); passive
+       Newton cooling toward ambient; aeration adds slight cooling.
+     · pH — slow drift toward a phase-dependent target (influent organics push
+       pH up during Feeding; nitrification pulls it down in Aeration); the
+       acid pump pushes pH down, base pump pushes it up.
+     · DO — kLa transfer toward saturation during Aeration; respiration/
+       organic-load consumption during Feeding; endogenous decay in Settling.
+     · S1 — generic suspended-solids/turbidity index: rises with influent
+       during Feeding, turbulent fluctuation in Aeration, decays as particles
+       settle in Settling, low and stable in Withdrawal/Idle.
+   ========================================================================== */
+const Simulator = {
+  _acc: 0,
+  STEP: 0.1,
+  T_AMBIENT: 22, T_HEAT: 34, DO_SAT: 8.6,
+
+  update(dtP) {
+    this._acc += dtP;
+    while (this._acc >= this.STEP) { this.step(this.STEP); this._acc -= this.STEP; }
+  },
+  step(h) {
+    const v = Sensors.vals, out = Outputs;
+    // phase context: before/after a cycle the reactor behaves like Idle
+    const ph = Sequencer.running() ? Sequencer.phase() : 'IDLE';
+    const aer = ph === 'AERATION' ? 1 : 0;
+
+    /* --- Temperature: heating + passive + evaporative(aeration) cooling --- */
+    let dT = (out.heater.on ? 0.035 * (this.T_HEAT - v.T) : 0)
+           + 0.0045 * (this.T_AMBIENT - v.T)
+           + aer * 0.002 * (this.T_AMBIENT - v.T);
+    v.T = clamp(v.T + dT * h + (Math.random() - 0.5) * 0.01, PHYS.T[0], PHYS.T[1]);
+
+    /* --- pH: process drift + acid/base dosing --- */
+    const pH_TARGET = { FEEDING: 8.1, AERATION: 7.4, SETTLING: 7.6, WITHDRAWAL: 7.5, IDLE: 7.5 }[ph];
+    let dpH = 0.0025 * (pH_TARGET - v.pH);
+    if (out.acid.on) dpH -= 0.045;
+    if (out.base.on) dpH += 0.045;
+    v.pH = clamp(v.pH + dpH * h + (Math.random() - 0.5) * 0.006, PHYS.pH[0], PHYS.pH[1]);
+
+    /* --- DO: aeration transfer vs respiration --- */
+    let dDO = aer * 0.02 * (this.DO_SAT - v.DO);
+    if (ph === 'FEEDING')  dDO -= Math.max(0.15, v.DO) * 0.018;  // organic load, no aeration
+    if (ph === 'SETTLING') dDO -= v.DO * 0.004;                  // endogenous decay
+    if (ph === 'IDLE')     dDO += 0.001 * (4 - v.DO);            // slow re-aeration at surface
+    v.DO = clamp(v.DO + dDO * h + (Math.random() - 0.5) * 0.02, PHYS.DO[0], PHYS.DO[1]);
+
+    /* --- S1: suspended solids index --- */
+    let dS1 = 0;
+    if (ph === 'FEEDING')    dS1 = 0.05 * (88 - v.S1);
+    if (ph === 'AERATION')   dS1 = (Math.random() - 0.45) * 0.8; // turbulence, stays high
+    if (ph === 'SETTLING')   dS1 = 0.02 * (15 - v.S1);           // particles settle out
+    if (ph === 'WITHDRAWAL' || ph === 'IDLE') dS1 = 0.01 * (10 - v.S1);
+    v.S1 = clamp(v.S1 + dS1 * h + (Math.random() - 0.5) * 0.15, PHYS.S1[0], PHYS.S1[1]);
+
+    Sensors.ingest(v, 'sim');
+  }
+};
+
+/* ==========================================================================
+   SECTION 5 · CONTROLLER LOGIC
+   --------------------------------------------------------------------------
+   Control loop runs at CTRL_PERIOD = 0.5 process-seconds (independent of
+   frame rate). Every output is a 2-point (hysteresis) controller:
+
+     Heater   ON when T < SP−DB · OFF when T > SP+DB · hold in between
+     Acid     ON when pH > SP+DB   (stays on until pH < SP−DB)
+     Base     ON when pH < SP−DB   (stays on until pH > SP+DB)
+     Sonicator hard-gated to the FEEDING phase; duty-cycles ON=SP s / OFF=DB s
+               (protects the probe); force-OFF in every other phase.
+
+   INTERLOCKS
+     1. Acid ✕ Base mutual exclusion — the pumps may never energize together.
+        If both request ON while neither is on, BOTH are blocked and the
+        event is reported. A running pump locks the other one out.
+     2. Relay guard — any single output toggles at most once per minOff
+        process-seconds. Toggles requested sooner are deferred (retried on
+        the next loop pass). E-STOP bypasses the guard (safety first).
+     3. Manual override forces a controller ON but is still subject to the
+        interlocks and E-stop. Overrides are not persisted across reloads.
+     4. In real mode with a stale/disconnected sensor link the automatic
+        loop is SUSPENDED (outputs hold their last state) — never act on
+        old measurements. Sonicator is phase-based and still allowed.
+   ========================================================================== */
+const Outputs = {
+  heater: { on: false, last: -1e9 },
+  acid:   { on: false, last: -1e9 },
+  base:   { on: false, last: -1e9 },
+  sonic:  { on: false, last: -1e9 }
+};
+const Interlock = { msg: '', until: 0 };
+
+const Controllers = {
+  _acc: 0,
+  PERIOD: 0.5,
+
+  update(dtP) {
+    this._acc += dtP;
+    if (this._acc < this.PERIOD) return;
+    this._acc = 0;
+
+    /* E-stop latch: force everything OFF (bypasses relay guard) */
+    if (App.estop) { this.apply('heater', false, true); this.apply('acid', false, true); this.apply('base', false, true); this.apply('sonic', false, true); return; }
+
+    const c = settings.ctrl, v = Sensors.vals;
+    const suspended = (App.mode === 'real' && (!Serial.connected || Sensors.stale));
+
+    /* --- Heater: hysteresis around sp --- */
+    let hWant;
+    if (!c.heater.en)            hWant = false;
+    else if (suspended)          hWant = Outputs.heater.on;               // hold — no fresh data
+    else if (c.heater.man)       hWant = true;
+    else if (Outputs.heater.on)  hWant = v.T <= c.heater.sp + c.heater.db;
+    else                         hWant = v.T <  c.heater.sp - c.heater.db;
+
+    /* --- Acid: ON above high SP, hysteresis --- */
+    let aWant;
+    if (!c.acid.en)           aWant = false;
+    else if (suspended)       aWant = Outputs.acid.on;
+    else if (c.acid.man)      aWant = true;
+    else if (Outputs.acid.on) aWant = v.pH >= c.acid.sp - c.acid.db;
+    else                      aWant = v.pH >  c.acid.sp + c.acid.db;
+
+    /* --- Base: ON below low SP, hysteresis --- */
+    let bWant;
+    if (!c.base.en)           bWant = false;
+    else if (suspended)       bWant = Outputs.base.on;
+    else if (c.base.man)      bWant = true;
+    else if (Outputs.base.on) bWant = v.pH <= c.base.sp + c.base.db;
+    else                      bWant = v.pH <  c.base.sp - c.base.db;
+
+    /* --- INTERLOCK: acid ✕ base mutual exclusion ---
+       A pump that is already ON denies the other. If both request
+       simultaneously from OFF, both are denied this cycle. */
+    if (aWant && bWant) {
+      if (Outputs.acid.on)      { bWant = false; this.flash('INTERLOCK: BASE blocked — ACID active'); }
+      else if (Outputs.base.on) { aWant = false; this.flash('INTERLOCK: ACID blocked — BASE active'); }
+      else                      { aWant = bWant = false; this.flash('INTERLOCK: simultaneous ACID+BASE request blocked'); }
+    } else if (bWant && Outputs.acid.on && !aWant) {
+      bWant = false; this.flash('INTERLOCK: BASE blocked — ACID active');
+    } else if (aWant && Outputs.base.on && !bWant) {
+      aWant = false; this.flash('INTERLOCK: ACID blocked — BASE active');
+    }
+
+    /* --- Sonicator: Feeding-only gate + duty cycling ---
+       Manual override still only applies inside Feeding. */
+    let sWant = false;
+    if (c.sonic.en && Sequencer.running() && Sequencer.phase() === 'FEEDING') {
+      const onT = Math.max(1, +c.sonic.sp || 1), offT = Math.max(0, +c.sonic.db || 0);
+      sWant = c.sonic.man ? true : (Sequencer.phElapsed % (onT + offT)) < onT;
+    }
+
+    this.apply('heater', hWant);
+    this.apply('acid',   aWant);
+    this.apply('base',   bWant);
+    this.apply('sonic',  sWant);
+
+    /* --- watch-level alarms (no actuator, indicator only) --- */
+    const w = settings.watch;
+    const doAlarm = w.DO.en && v.DO < w.DO.sp;
+    const s1Alarm = w.S1.en && v.S1 > w.S1.sp;
+    if (doAlarm !== UI.alarmDO) { UI.alarmDO = doAlarm; if (doAlarm) UI.serialMonitor('sys', `ALARM: DO below ${w.DO.sp} mg/L`); }
+    if (s1Alarm !== UI.alarmS1) { UI.alarmS1 = s1Alarm; if (s1Alarm) UI.serialMonitor('sys', `ALARM: S1 above ${w.S1.sp} au`); }
+  },
+
+  /* Apply a requested output state through the relay guard.
+     force=true bypasses both the guard and the E-stop latch (used BY the
+     E-stop itself to guarantee OFF, and on initial sync). */
+  apply(name, want, force) {
+    const o = Outputs[name];
+    if (App.estop && !force) want = false;
+    if (want === o.on) return;
+    if (!force && (App.processTime - o.last) < settings.minOff) {
+      this.flash(`RELAY GUARD: ${name.toUpperCase()} toggle deferred (< ${(+settings.minOff).toFixed(1)} s)`);
+      return;
+    }
+    o.on = want;
+    o.last = App.processTime;
+    const cmd = (name === 'sonic' ? 'SONICATOR' : name.toUpperCase()) + ':' + (want ? '1' : '0');
+    if (Serial.connected) Serial.sendRaw(cmd);
+    else UI.serialMonitor('sys', 'SIM ' + cmd);
+    UI.refreshActuators();
+  },
+
+  flash(msg) {
+    Interlock.msg = msg;
+    Interlock.until = Date.now() + 2500;
+  }
+};
+
+/* ==========================================================================
+   SECTION 6 · DATA LOGGER
+   Rows are sampled every `log.interval` process-seconds (process time = wall
+   time in real mode; scaled time in simulator mode, giving a uniform data
+   grid on the physics timeline). Column selection follows the spec order:
+   timestamp, phase, pH, temp, DO, S1, heater, acid, base, sonicator.
+   ========================================================================== */
+const LOG_COLS = [
+  { k: 'pH',     head: 'pH',        get: r => r.pH.toFixed(3) },
+  { k: 'T',      head: 'temp',      get: r => r.T.toFixed(3)  },
+  { k: 'DO',     head: 'DO',        get: r => r.DO.toFixed(3) },
+  { k: 'S1',     head: 'S1',        get: r => r.S1.toFixed(2) },
+  { k: 'heater', head: 'heater',    get: r => r.h },
+  { k: 'acid',   head: 'acid',      get: r => r.a },
+  { k: 'base',   head: 'base',      get: r => r.b },
+  { k: 'sonic',  head: 'sonicator', get: r => r.s }
+];
+
+const Logger = {
+  rows: [], MAX: 8000, on: false, _acc: 0,
+
+  tick(dtP) {
+    if (!this.on) return;
+    this._acc += dtP;
+    const iv = Math.max(1, +settings.log.interval || 1);
+    if (this._acc >= iv) {
+      this._acc %= iv;
+      this.push();
+    }
+  },
+  push() {
+    const v = Sensors.vals;
+    this.rows.push({
+      ts: new Date(), phase: Sequencer.phase(),
+      pH: v.pH, T: v.T, DO: v.DO, S1: v.S1,
+      h: Outputs.heater.on ? 1 : 0, a: Outputs.acid.on ? 1 : 0,
+      b: Outputs.base.on ? 1 : 0,   s: Outputs.sonic.on ? 1 : 0
     });
-    
-    // Legend
-    let ly = padT + 2;
-    keys.forEach(k => {
-      graphCtx.fillStyle = state.sensors[k].color;
-      graphCtx.fillRect(w - 45, ly, 10, 3);
-      graphCtx.fillStyle = '#333';
-      graphCtx.font = '9px Arial';
-      graphCtx.fillText(k === 'pH' ? 'pH/14' : k, w - 32, ly + 4);
-      ly += gh / 5;
-    });
+    if (this.rows.length > this.MAX) this.rows.shift();
+  },
+  selectedCols() { return LOG_COLS.filter(c => settings.log.cols[c.k]); },
+  csv() {
+    const sel = this.selectedCols();
+    const head = ['timestamp', 'phase', ...sel.map(c => c.head)];
+    const lines = [head.join(',')];
+    for (const r of this.rows) {
+      lines.push([fmtStamp(r.ts), r.phase, ...sel.map(c => c.get(r))].join(','));
+    }
+    return lines.join('\n');
+  },
+  download() {
+    if (!this.rows.length) { toast('Log is empty — start logging first', 'warn'); return; }
+    const d = new Date();
+    downloadFile(`sbcr_log_${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}.csv`, this.csv());
+    toast(`CSV downloaded — ${this.rows.length} rows`, 'ok');
+  },
+  clear() { this.rows = []; UI.logPreview(); },
+  toggle() {
+    this.on = !this.on;
+    this._acc = 0;
+    const b = $('#btnLog');
+    b.textContent = this.on ? 'Stop logging' : 'Start logging';
+    b.classList.toggle('danger', this.on);
+    UI.serialMonitor('sys', this.on ? 'LOGGING started' : 'LOGGING stopped');
+  }
+};
+/* ==========================================================================
+   SECTION 7 · HISTORY CHARTS (Chart.js) + phase-change markers
+   One line chart per sensor; x = process time. A tiny custom plugin draws a
+   dashed vertical marker (phase colour + letter) at every phase transition
+   recorded by the Sequencer. Charts refresh at 1 Hz real time and trim
+   points outside the selected window.
+   ========================================================================== */
+const phaseMarkerPlugin = {
+  id: 'phaseMarkers',
+  afterDraw(chart) {
+    const evs = chart.$phaseEvents;
+    if (!evs || !evs.length) return;
+    const xs = chart.scales.x, area = chart.chartArea;
+    if (!xs || !area) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    for (const e of evs) {
+      if (e.t < xs.min || e.t > xs.max) continue;
+      const x = xs.getPixelForValue(e.t);
+      ctx.strokeStyle = PHASE_META[e.ph].color;
+      ctx.globalAlpha = 0.7;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, area.top); ctx.lineTo(x, area.bottom); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = PHASE_META[e.ph].color;
+      ctx.font = '9px monospace';
+      ctx.fillText(PHASE_META[e.ph].label[0], x + 3, area.top + 9);
+    }
+    ctx.restore();
+  }
+};
+
+const Charts = {
+  charts: {}, phaseEvents: [], ready: false,
+
+  init() {
+    if (typeof Chart === 'undefined') { $('#chartsNA').classList.remove('hidden'); return; }
+    Chart.defaults.color = '#8ba0bd';
+    Chart.defaults.borderColor = 'rgba(148,163,184,.09)';
+    Chart.defaults.font.family = "'JetBrains Mono',ui-monospace,monospace";
+    for (const k of SKEYS) {
+      const meta = settings.gauges[k];
+      $('#cht_' + k).textContent = meta.label;
+      $('#chu_' + k).textContent = meta.unit;
+      this.charts[k] = new Chart($('#ch_' + k), {
+        type: 'line',
+        data: { datasets: [{
+          data: [], borderColor: GAUGE_COLORS[k], backgroundColor: GAUGE_COLORS[k] + '1f',
+          borderWidth: 1.6, pointRadius: 0, tension: 0.25, fill: true
+        }]},
+        options: {
+          animation: false, responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: false },
+          scales: {
+            x: {
+              type: 'linear', min: 0, max: 60,
+              grid: { color: 'rgba(148,163,184,.07)' },
+              ticks: { color: '#5c7191', maxTicksLimit: 6, callback: v => fmtHMS(v) }
+            },
+            y: {
+              min: meta.min, max: meta.max,
+              grid: { color: 'rgba(148,163,184,.07)' },
+              ticks: { color: '#5c7191', maxTicksLimit: 5 }
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: {
+              title: items => 'T+ ' + fmtHMS(items[0].parsed.x),
+              label: item => item.parsed.y.toFixed(DEC[k])
+            } }
+          }
+        },
+        plugins: [phaseMarkerPlugin]
+      });
+    }
+    this.ready = true;
+  },
+
+  addPhaseEvent(t, ph) {
+    this.phaseEvents.push({ t, ph });
+    if (this.phaseEvents.length > 300) this.phaseEvents.shift();
+  },
+
+  /* append latest history sample to each chart dataset (1 Hz real time) */
+  pushData() {
+    if (!this.ready) return;
+    const win = +settings.chartWindow, tNow = App.processTime;
+    for (const k of SKEYS) {
+      const h = Sensors.hist[k];
+      if (!h.length) continue;
+      const ds = this.charts[k].data.datasets[0].data;
+      const last = h[h.length - 1];
+      if (!ds.length || ds[ds.length - 1].x < last.t) ds.push({ x: last.t, y: last.v });
+      const tMin = win > 0 ? tNow - win : -Infinity;
+      while (ds.length && ds[0].x < tMin) ds.shift();
+      if (ds.length > 1400) ds.splice(0, ds.length - 1400);
+    }
+  },
+
+  refresh() {
+    if (!this.ready) return;
+    const win = +settings.chartWindow, tNow = App.processTime;
+    for (const k of SKEYS) {
+      const ch = this.charts[k], g = settings.gauges[k];
+      ch.options.scales.x.min = win > 0 ? Math.max(0, tNow - win) : 0;
+      ch.options.scales.x.max = tNow + 1;
+      ch.options.scales.y.min = g.min;
+      ch.options.scales.y.max = Math.max(g.min + 0.1, g.max);
+      ch.$phaseEvents = this.phaseEvents;
+      ch.update('none');
+    }
+  }
+};
+
+/* ==========================================================================
+   SECTION 8 · WEB SERIAL LINK
+   --------------------------------------------------------------------------
+   PROTOCOL (line-based, ASCII, LF-terminated '\n'):
+     device → host :  pH:7.21,T:24.5,DO:6.3,S1:0          (1–5 Hz recommended)
+     host → device :  HEATER:1   SONICATOR:0   ACID:0   BASE:1
+   · RX: partial lines are buffered until '\n'; the parser tolerates unknown
+     keys, arbitrary key order and stray spaces; missing keys keep last value.
+   · TX: one line per actuator state change + a full snapshot on connect, so
+     the firmware always converges to the dashboard state after (re)connect.
+   · DROP/RECONNECT: the 'disconnect' USB event (or a read error) triggers an
+     automatic reopen loop on the same SerialPort (8 tries, 2 s apart) when
+     auto-reconnect is enabled. If the device was physically unplugged the
+     port object becomes invalid — the operator must Choose port again.
+   ========================================================================== */
+function parseTelemetry(line) {
+  const out = {};
+  for (const part of line.split(',')) {
+    const i = part.indexOf(':');
+    if (i < 0) continue;
+    const key = part.slice(0, i).trim().toLowerCase();
+    const val = parseFloat(part.slice(i + 1).trim());
+    if (!Number.isFinite(val)) continue;
+    if (key === 'ph')            out.pH = val;
+    else if (key === 't' || key === 'temp') out.T = val;
+    else if (key === 'do')       out.DO = val;
+    else if (key === 's1')       out.S1 = val;   // unknown keys silently ignored
+  }
+  return out;
+}
+
+const Serial = {
+  port: null, reader: null,
+  connected: false, keepReading: false, manualDrop: false,
+  rxBuf: '', _reconnecting: false,
+
+  available() { return typeof navigator !== 'undefined' && 'serial' in navigator; },
+
+  async connect() {
+    if (!this.available()) { UI.serialStatus('unavailable'); return; }
+    this.manualDrop = false;
+    try {
+      if (!this.port) this.port = await navigator.serial.requestPort();
+      await this.port.open({ baudRate: +settings.serial.baud || 115200 });
+      this.connected = true; this.keepReading = true;
+      UI.serialStatus('connected');
+      UI.serialMonitor('sys', `port opened @ ${settings.serial.baud} baud — requesting actuator snapshot`);
+      this.sendSnapshot();
+      this.rxLoop();
+    } catch (e) {
+      console.warn('serial open failed', e);
+      UI.serialStatus('error', e.message || e.name);
+      if (!this.connected) { /* keep port object so Connect can retry */ }
+    }
+  },
+
+  /* RX pump: reads chunks forever while the port is readable; on end/error it
+     marks the link lost and (optionally) starts auto-reconnect. */
+  async rxLoop() {
+    const dec = new TextDecoder();
+    while (this.port && this.port.readable && this.keepReading) {
+      try {
+        this.reader = this.port.readable.getReader();
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          this.rxBuf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = this.rxBuf.indexOf('\n')) >= 0) {
+            const line = this.rxBuf.slice(0, i).trim();
+            this.rxBuf = this.rxBuf.slice(i + 1);
+            if (line) this.handleLine(line);
+          }
+        }
+      } catch (e) {
+        console.warn('serial read error', e);
+        break;
+      } finally {
+        try { if (this.reader) { this.reader.releaseLock(); } } catch (_) {}
+        this.reader = null;
+      }
+    }
+    if (this.connected) {           // abnormal end-of-stream → link lost
+      this.connected = false;
+      UI.serialStatus('lost');
+      UI.serialMonitor('sys', 'serial link lost');
+      this.tryReconnect();
+    }
+  },
+
+  handleLine(line) {
+    const o = parseTelemetry(line);
+    Sensors.ingest(o, 'serial');
+    UI.serialMonitor('rx', line);
+  },
+
+  async sendRaw(cmd) {   // cmd without newline, e.g. "HEATER:1"
+    if (this.connected && this.port && this.port.writable) {
+      try {
+        const w = this.port.writable.getWriter();
+        await w.write(new TextEncoder().encode(cmd + '\n'));
+        w.releaseLock();
+        UI.serialMonitor('tx', cmd);
+      } catch (e) { console.warn('tx failed', e); }
+    }
+  },
+  sendSnapshot() {  // converge firmware to dashboard state after (re)connect
+    for (const [name, o] of Object.entries(Outputs)) {
+      this.sendRaw((name === 'sonic' ? 'SONICATOR' : name.toUpperCase()) + ':' + (o.on ? '1' : '0'));
+    }
+  },
+
+  disconnect() {
+    this.manualDrop = true;
+    this.keepReading = false;
+    this.connected = false;
+    try { if (this.reader) this.reader.cancel(); } catch (_) {}
+    UI.serialStatus('disconnected');
+    UI.serialMonitor('sys', 'port closed by operator');
+  },
+
+  async tryReconnect() {
+    if (this._reconnecting || this.manualDrop || !settings.serial.auto) return;
+    this._reconnecting = true;
+    for (let i = 1; i <= 8; i++) {
+      UI.serialStatus('reconnecting', i);
+      await new Promise(r => setTimeout(r, 2000));
+      if (this.manualDrop) break;
+      try {
+        await this.port.open({ baudRate: +settings.serial.baud || 115200 });
+        this.connected = true; this.keepReading = true; this._reconnecting = false;
+        UI.serialStatus('connected');
+        UI.serialMonitor('sys', 'reconnected — actuator snapshot re-sent');
+        this.sendSnapshot();
+        this.rxLoop();
+        return;
+      } catch (e) { /* device still gone — retry */ }
+    }
+    this._reconnecting = false;
+    UI.serialStatus('failed');
+    UI.serialMonitor('sys', 'auto-reconnect failed — unplug/replug and press Connect');
+  },
+
+  watchdog() { if (App.mode === 'real' && this.connected) Sensors.checkStale(); }
+};
+
+/* USB unplug event → treat as link loss (auto-reconnect will try to reopen) */
+if (typeof navigator !== 'undefined' && navigator.serial && navigator.serial.addEventListener) {
+  navigator.serial.addEventListener('disconnect', e => {
+    if (e.port === Serial.port && Serial.connected) {
+      Serial.connected = false; Serial.keepReading = false;
+      UI.serialStatus('lost');
+      UI.serialMonitor('sys', 'USB device disconnected');
+      Serial.tryReconnect();
+    }
+  });
+}
+/* ==========================================================================
+   SECTION 9 · TANK + GAUGES + UI RENDERING
+   A requestAnimationFrame loop interpolates cosmetics only (needle chase,
+   tank level easing). All *state* timing lives in the central Clock.
+   ========================================================================== */
+
+/* ---- Tank level model: deterministic per sequencer progress ----
+   Feeding fills toward 100 %, Withdrawal drains toward 20 %, Idle drains to
+   ~2 % (empty), Aeration/Settling hold the level captured at phase entry. */
+const Tank = {
+  level: 10, levelStart: 10,
+  captureLevel() { this.levelStart = this.level; },
+  reset() { this.level = 10; this.levelStart = 10; },
+  target() {
+    const s = Sequencer;
+    if (s.running()) {
+      const pr = clamp(s.phElapsed / Math.max(1, s.dur[s.phaseIdx]), 0, 1);
+      switch (s.phase()) {
+        case 'FEEDING':    return lerp(this.levelStart, 100, pr);
+        case 'WITHDRAWAL': return lerp(this.levelStart, 20, pr);
+        case 'IDLE':       return lerp(this.levelStart, 2, pr);
+        default:           return this.levelStart;          // Aeration / Settling
+      }
+    }
+    return (s.state === 'STOPPED' && !App.started) ? 10 : this.level;
+  },
+  tick(dtReal) {
+    const tgt = this.target();
+    this.level += (tgt - this.level) * Math.min(1, dtReal * 2.5);
+    const bottom = 290, span = 240;                        // SVG vessel geometry
+    const top = bottom - (clamp(this.level, 0, 100) / 100) * span;
+    $('#waterRect').setAttribute('y', top.toFixed(1));
+    $('#waterRect').setAttribute('height', Math.max(0, bottom - top).toFixed(1));
+    $('#waveGroup').setAttribute('transform', `translate(0,${(top - 8).toFixed(1)})`);
+  }
+};
+
+function spawnTankLife() {  // bubbles + settle particles (purely decorative)
+  const b = $('#bubbles');
+  for (let i = 0; i < 14; i++) {
+    const c = document.createElementNS(SVGNS, 'circle');
+    c.setAttribute('cx', (92 + Math.random() * 116).toFixed(1));
+    c.setAttribute('cy', (276 + Math.random() * 8).toFixed(1));
+    c.setAttribute('r', (1.5 + Math.random() * 2.6).toFixed(1));
+    c.style.animationDuration = (2.2 + Math.random() * 2.6).toFixed(2) + 's';
+    c.style.animationDelay = (-Math.random() * 3).toFixed(2) + 's';
+    b.appendChild(c);
+  }
+  const p = $('#particles');
+  for (let i = 0; i < 16; i++) {
+    const c = document.createElementNS(SVGNS, 'circle');
+    c.setAttribute('cx', (86 + Math.random() * 128).toFixed(1));
+    c.setAttribute('cy', (62 + Math.random() * 150).toFixed(1));
+    c.setAttribute('r', (1 + Math.random() * 1.6).toFixed(1));
+    c.style.animationDuration = (6 + Math.random() * 8).toFixed(2) + 's';
+    c.style.animationDelay = (-Math.random() * 10).toFixed(2) + 's';
+    p.appendChild(c);
   }
 }
 
-// === UPDATE SENSOR READINGS ===
-function updateDisplay() {
-  document.getElementById('val-T').textContent = state.sensors.T.val.toFixed(1);
-  document.getElementById('val-pH').textContent = state.sensors.pH.val.toFixed(2);
-  document.getElementById('val-Oxy').textContent = state.sensors.Oxy.val.toFixed(0);
-  document.getElementById('val-S1').textContent = state.sensors.S1.val.toFixed(0);
-  document.getElementById('val-S2').textContent = state.sensors.S2.val.toFixed(0);
+/* ---- Canvas gauges: 270° arc, animated needle chase, tick ring ---- */
+const Gauges = {
+  list: {},
+  init() {
+    for (const k of SKEYS) {
+      const cv = $('#gauge_' + k), sp = $('#spark_' + k);
+      this.list[k] = { cv, ctx: cv.getContext('2d'), sp, spCtx: sp.getContext('2d'), cw: 0, ch: 0, disp: Sensors.vals[k] };
+    }
+    this.size();
+    window.addEventListener('resize', () => { this.size(); });
+  },
+  size() {
+    const dpr = window.devicePixelRatio || 1;
+    for (const k of SKEYS) {
+      const g = this.list[k];
+      const r = g.cv.getBoundingClientRect();
+      if (!r.width) continue;
+      g.cw = r.width; g.ch = r.height;
+      g.cv.width = Math.round(r.width * dpr); g.cv.height = Math.round(r.height * dpr);
+      g.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const r2 = g.sp.getBoundingClientRect();
+      g.spw = r2.width; g.sph = r2.height;
+      g.sp.width = Math.round(r2.width * dpr); g.sp.height = Math.round(r2.height * dpr);
+      g.spCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+  },
+  step(dtReal) {  // needle chase (cosmetic)
+    for (const k of SKEYS) {
+      const g = this.list[k];
+      g.disp += (Sensors.vals[k] - g.disp) * Math.min(1, dtReal * 7);
+    }
+  },
+  draw() {
+    for (const k of SKEYS) this.drawOne(k);
+  },
+  drawOne(k) {
+    const g = this.list[k];
+    if (!g.cw) return;
+    const ctx = g.ctx, W = g.cw, H = g.ch;
+    const gs = settings.gauges[k];
+    const min = gs.min, max = Math.max(gs.min + 0.1, gs.max);
+    const cx = W / 2, cy = H * 0.56, R = Math.min(W * 0.5 - 10, H * 0.5);
+    const A0 = Math.PI * 0.75, A1 = Math.PI * 2.25;   // 270° sweep, gap at bottom
+    ctx.clearRect(0, 0, W, H);
+    /* track */
+    ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(148,163,184,.15)';
+    ctx.beginPath(); ctx.arc(cx, cy, R, A0, A1); ctx.stroke();
+    /* value arc up to needle position */
+    const frac = clamp((g.disp - min) / (max - min), 0, 1);
+    ctx.strokeStyle = GAUGE_COLORS[k];
+    ctx.beginPath(); ctx.arc(cx, cy, R, A0, A0 + (A1 - A0) * frac); ctx.stroke();
+    /* tick ring */
+    ctx.lineWidth = 1.5; ctx.lineCap = 'butt';
+    for (let i = 0; i <= 20; i++) {
+      const a = A0 + (A1 - A0) * i / 20;
+      const major = i % 5 === 0;
+      const r1 = R - 9, r2 = R - (major ? 16 : 12);
+      ctx.strokeStyle = major ? 'rgba(220,232,247,.5)' : 'rgba(148,163,184,.22)';
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+      ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+      ctx.stroke();
+    }
+    /* needle */
+    const na = A0 + (A1 - A0) * frac;
+    ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(na) * (R - 19), cy + Math.sin(na) * (R - 19));
+    ctx.stroke();
+    ctx.fillStyle = '#f1f5f9';
+    ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+  },
+  drawSpark(k) {  // last ~45 process-seconds, auto-scaled
+    const g = this.list[k];
+    if (!g.spw) return;
+    const ctx = g.spCtx, W = g.spw, H = g.sph;
+    ctx.clearRect(0, 0, W, H);
+    const buf = Sensors.spark[k];
+    if (buf.length < 2) return;
+    let lo = Infinity, hi = -Infinity;
+    for (const p of buf) { if (p.v < lo) lo = p.v; if (p.v > hi) hi = p.v; }
+    if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.18; lo -= pad; hi += pad;
+    const X = i => 3 + (i / (buf.length - 1)) * (W - 6);
+    const Y = v => H - 3 - ((v - lo) / (hi - lo)) * (H - 6);
+    /* filled area */
+    ctx.beginPath(); ctx.moveTo(X(0), H - 2);
+    buf.forEach((p, i) => ctx.lineTo(X(i), Y(p.v)));
+    ctx.lineTo(X(buf.length - 1), H - 2); ctx.closePath();
+    ctx.fillStyle = GAUGE_COLORS[k] + '22'; ctx.fill();
+    /* line */
+    ctx.beginPath();
+    buf.forEach((p, i) => i ? ctx.lineTo(X(i), Y(p.v)) : ctx.moveTo(X(i), Y(p.v)));
+    ctx.strokeStyle = GAUGE_COLORS[k]; ctx.lineWidth = 1.5; ctx.stroke();
+    /* last point */
+    const lp = buf[buf.length - 1];
+    ctx.fillStyle = GAUGE_COLORS[k];
+    ctx.beginPath(); ctx.arc(X(buf.length - 1), Y(lp.v), 2, 0, Math.PI * 2); ctx.fill();
+  }
+};
+
+/* ---- UI: throttled DOM updates + event-driven state flashes ---- */
+const UI = {
+  _lastText: 0, _lastChart: 0, _lastSpark: 0,
+  alarmDO: false, alarmS1: false,
+
+  /* ~4 Hz: countdowns, numeric readouts, chips, interlock bar, alarms */
+  text() {
+    const s = Sequencer;
+    $('#phaseRem').textContent = fmtHMS(s.phaseRemaining());
+    $('#phaseBar').style.width = (s.running() ? clamp(s.phElapsed / Math.max(1, s.dur[s.phaseIdx]), 0, 1) * 100 : (s.state === 'FINISHED' ? 100 : 0)) + '%';
+    $('#phaseElapsed').textContent = fmtHMS(s.phElapsed);
+    $('#cycleElapsed').textContent = fmtHMS(s.totalElapsed);
+    const rem = s.totalRemaining();
+    $('#totalRem').textContent = isFinite(rem) ? fmtHMS(rem) : '∞';   // loop mode never ends by itself
+    const ct = App.started ? s.cyclesTarget : s.plannedTarget();   // planned plan before Start
+    const cur = isFinite(ct) ? Math.min(s.cyclesDone + 1, ct) : s.cyclesDone + 1;
+    $('#cycleProg').textContent = `${cur} / ${isFinite(ct) ? ct : '∞'}`;
+    $('#procClock').textContent = 'T+ ' + fmtHMS(App.processTime);
+
+    const showVals = (App.mode === 'sim') || Sensors.gotReal;
+    for (const k of SKEYS) {
+      const gs = settings.gauges[k];
+      $('#val_' + k).textContent = showVals ? Sensors.vals[k].toFixed(DEC[k]) : '--';
+      $('#gname_' + k).textContent = gs.label;
+      $('#gunit_' + k).textContent = gs.unit;
+      $('#gmin_' + k).textContent = gs.min;
+      $('#gmax_' + k).textContent = gs.max;
+      const tr = Sensors.trend[k], el = $('#trend_' + k);
+      el.textContent = tr > 0 ? '↑' : (tr < 0 ? '↓' : '→');
+      el.className = 'trend ' + (tr > 0 ? 'up' : tr < 0 ? 'down' : 'flat');
+    }
+    /* sensor link chip + gauge alarms */
+    const lc = $('#linkChip');
+    if (App.mode === 'sim')          { lc.textContent = 'SIMULATED'; lc.className = 'chip-mini sim'; }
+    else if (!Serial.connected)      { lc.textContent = 'NO LINK';   lc.className = 'chip-mini off'; }
+    else if (Sensors.stale)          { lc.textContent = 'STALE';     lc.className = 'chip-mini warn'; }
+    else                             { lc.textContent = 'LIVE';      lc.className = 'chip-mini live'; }
+    $('#card_DO').classList.toggle('alarm', UI.alarmDO);
+    $('#card_S1').classList.toggle('alarm', UI.alarmS1);
+    $('#st_watch').textContent = UI.alarmDO ? 'ALARM: DO low' : UI.alarmS1 ? 'ALARM: S1 high' : (UI.alarmDO || UI.alarmS1) ? 'ALARM ACTIVE' : 'no alarm';
+    $('#lamp_watch').classList.toggle('on', UI.alarmDO || UI.alarmS1);
+
+    /* actuator state lines */
+    const susp = App.mode === 'real' && (!Serial.connected || Sensors.stale);
+    $('#st_heater').textContent = susp ? 'SUSPENDED · no sensor link' : (Outputs.heater.on ? 'ON · heating' : 'OFF');
+    $('#st_acid').textContent   = susp ? 'SUSPENDED · no sensor link' : (Outputs.acid.on ? 'DOSING' : 'OFF');
+    $('#st_base').textContent   = susp ? 'SUSPENDED · no sensor link' : (Outputs.base.on ? 'DOSING' : 'OFF');
+    const inFeed = s.running() && s.phase() === 'FEEDING';
+    $('#st_sonic').textContent = Outputs.sonic.on ? 'SONICATING' : inFeed ? 'OFF · duty cycle' : 'OFF · not in Feeding';
+
+    /* interlock / relay-guard banner */
+    const ib = $('#interlockBar');
+    if (Date.now() < Interlock.until) {
+      ib.textContent = Interlock.msg;
+      ib.classList.add('alert');
+    } else {
+      ib.textContent = `interlocks: ACID / BASE mutual exclusion · relay guard ${(+settings.minOff).toFixed(1)} s min-off`;
+      ib.classList.remove('alert');
+    }
+  },
+
+  /* 1 Hz: charts + log preview + sparklines (0.5 Hz) */
+  slow(now) {
+    Charts.pushData(); Charts.refresh();
+    UI.logPreview();
+    if (now - UI._lastSpark > 500) {
+      UI._lastSpark = now;
+      for (const k of SKEYS) Gauges.drawSpark(k);
+    }
+  },
+
+  tick(now) {   // rAF driven
+    if (now - this._lastText > 250) { this._lastText = now; this.text(); }
+    if (now - this._lastChart > 1000) { this._lastChart = now; this.slow(now); }
+  },
+
+  /* phase-dependent visuals: chips, phase name, tank colour */
+  onPhaseChange() {
+    const active = Sequencer.running() || Sequencer.state === 'FINISHED';
+    const ph = active ? Sequencer.phase() : 'IDLE';
+    const wrap = $('#tankWrap');
+    wrap.dataset.phase = ph;
+    wrap.classList.toggle('running', Sequencer.state === 'RUNNING');
+    $$('#phasePipeline .chip').forEach(c => c.classList.toggle('active', active && c.dataset.ph === ph));
+    const meta = PHASE_META[ph];
+    $('#phaseName').textContent = (Sequencer.state === 'STOPPED' && !App.started) ? '—' : meta.label;
+    $('#phaseName').style.color = meta.color;
+    $('#tankPhase').textContent = meta.label.toUpperCase();
+  },
+
+  /* sequencer state → badge + button availability */
+  onSeqState() {
+    const st = Sequencer.state;
+    const b = $('#seqBadge');
+    b.textContent = App.estop ? 'E-STOP' : st.toUpperCase();
+    b.className = 'badge st-' + (App.estop ? 'estop' : st.toLowerCase());
+    $('#btnStart').disabled = App.estop || st === 'RUNNING' || st === 'PAUSED';
+    $('#btnPause').disabled = !(st === 'RUNNING' || st === 'PAUSED');
+    $('#btnPause').textContent = st === 'PAUSED' ? 'Resume' : 'Pause';
+    $('#btnStop').disabled = !(st === 'RUNNING' || st === 'PAUSED');
+    $('#btnClearEstop').classList.toggle('hidden', !App.estop);
+    $('#btnEstop').disabled = App.estop;
+    const lockDur = (st === 'RUNNING' || st === 'PAUSED');
+    $$('[data-dur]').forEach(el => { el.disabled = lockDur; });
+    $('#durNote').classList.toggle('hidden', !lockDur);
+    /* repeat plan is locked while a run is active (re-read at Start) */
+    $$('#seqRepeat input').forEach(el => { el.disabled = lockDur; });
+    $('#seqRepeat').classList.toggle('locked', lockDur);
+    $('#tankWrap').classList.toggle('running', st === 'RUNNING');
+  },
+
+  /* actuator lamps + tank glow (also called on every output change) */
+  refreshActuators() {
+    for (const [name, o] of Object.entries(Outputs)) {
+      const lamp = $('#lamp_' + name); if (lamp) lamp.classList.toggle('on', o.on);
+      const act = $('#act' + name[0].toUpperCase() + name.slice(1)); if (act) act.classList.toggle('on', o.on);
+    }
+    $('#heaterCoil').classList.toggle('on', Outputs.heater.on);
+    $('#sonicRod').classList.toggle('on', Outputs.sonic.on);
+    $('.acidPort').classList.toggle('on', Outputs.acid.on);
+    $('.basePort').classList.toggle('on', Outputs.base.on);
+  },
+
+  /* serial monitor — TX / RX / system lines, capped at 250 entries */
+  serialMonitor(dir, text) {
+    const box = $('#serialMon');
+    const d = document.createElement('div');
+    d.className = 'ml ' + dir;
+    const mt = document.createElement('span'); mt.className = 'mt'; mt.textContent = fmtWall();
+    const md = document.createElement('span'); md.className = 'md'; md.textContent = dir.toUpperCase();
+    const mv = document.createElement('span'); mv.className = 'mv'; mv.textContent = text;
+    d.append(mt, md, mv);
+    box.appendChild(d);
+    while (box.children.length > 250) box.firstChild.remove();
+    box.scrollTop = box.scrollHeight;
+  },
+
+  serialStatus(state, info) {
+    const el = $('#serialStatus');
+    const map = {
+      connected:    ['LINK · connected @ ' + settings.serial.baud, 'ok'],
+      reconnecting: ['LINK · reconnecting (attempt ' + info + '/8)…', 'warn'],
+      lost:         ['LINK · lost — reconnecting…', 'warn'],
+      disconnected: ['offline', ''],
+      error:        ['error: ' + (info || 'could not open port'), 'err'],
+      failed:       ['reconnect failed — replug device, then Connect', 'err'],
+      unavailable:  ['Web Serial unavailable in this browser', 'err'],
+      port:         ['port selected — press Connect', 'ok']
+    };
+    const [txt, cls] = map[state] || [state, ''];
+    el.textContent = txt; el.className = 'serial-status mono ' + cls;
+    const chip = $('#serialChip');
+    const on = state === 'connected' || state === 'reconnecting' || state === 'lost';
+    chip.textContent = 'SERIAL · ' + (state === 'connected' ? 'ON' : state === 'reconnecting' ? '…" ' : state === 'lost' ? 'LOST' : 'OFF');
+    chip.className = 'chip-btn' + (state === 'connected' ? ' ok' : on ? ' warn' : state === 'unavailable' || state === 'error' || state === 'failed' ? ' err' : '');
+    const bc = $('#btnConnect');
+    bc.textContent = Serial.connected ? 'Disconnect' : 'Connect';
+  },
+
+  logPreview() {
+    const t = $('#logTable');
+    const sel = Logger.selectedCols();
+    let html = '<thead><tr><th>time</th><th>phase</th>' + sel.map(c => '<th>' + c.head + '</th>').join('') + '</tr></thead><tbody>';
+    const rows = Logger.rows.slice(-8).reverse();
+    for (const r of rows) {
+      html += `<tr><td>${fmtWall(r.ts)}</td><td>${r.phase}</td>` + sel.map(c => `<td>${c.get(r)}</td>`).join('') + '</tr>';
+    }
+    t.innerHTML = html + '</tbody>';
+    $('#rowCount').textContent = `${Logger.rows.length} rows${Logger.on ? ' · logging' : ''}`;
+  },
+
+  /* mode-dependent labels: duration units, time-scale visibility, totals */
+  refreshModeUI() {
+    $$('#modeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === App.mode));
+    $('#tsWrap').classList.toggle('hidden', App.mode !== 'sim');
+    $('#unitRow').classList.toggle('hidden', App.mode !== 'real');
+    $('#unitHint').textContent = App.mode === 'sim'
+      ? `seconds · time scale ×${settings.timeScale}`
+      : (settings.unitReal === 'h' ? 'hours · real time' : 'minutes · real time');
+    $$('#durGrid .unit').forEach(u => u.textContent = App.mode === 'sim' ? 's' : (settings.unitReal === 'h' ? 'h' : 'min'));
+    this.applyDurations();
+  },
+
+  applyDurations() {
+    const set = App.mode === 'sim' ? settings.durSim : settings.durReal;
+    $$('[data-dur]').forEach(el => {
+      el.value = set[el.dataset.dur];
+      el.min = App.mode === 'sim' ? 5 : 0.5;
+      el.max = App.mode === 'sim' ? 7200 : 48;
+      el.step = App.mode === 'sim' ? 5 : (settings.unitReal === 'h' ? 0.1 : 1);
+    });
+    this.updateDurTotal();
+  },
+  updateDurTotal() {
+    const s = Sequencer.durationsSec();
+    $('#durTotal').textContent = fmtHMS(s.reduce((a, b) => a + b, 0));
+  }
+};
+
+/* ---- Toasts ---- */
+function toast(msg, kind) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + (kind || '');
+  t.textContent = msg;
+  const box = $('#toasts');
+  box.appendChild(t);
+  while (box.children.length > 3) box.firstChild.remove();
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 350); }, 2800);
 }
 
-// === UPDATE COUNTDOWN TIMER ===
-function updateTimerDisplay() {
-  if (!state.running || state.paused || !state.phaseStartTime) {
-    state.phases.forEach(p => {
-      const el = document.getElementById(`timer-${p}`);
-      if (el) el.textContent = '--';
-    });
-    return;
-  }
-  const elapsed = Date.now() - state.phaseStartTime;
-  const remaining = Math.max(0, Math.ceil((state.phaseDurationMs - elapsed) / 1000));
-  state.phases.forEach(p => {
-    const el = document.getElementById(`timer-${p}`);
-    if (el) el.textContent = (p === state.phase) ? remaining : '--';
+/* ---- Modal (confirm dialog before starting a cycle, etc.) ---- */
+const Modal = {
+  _onOk: null,
+  show(opts) {
+    $('#modalTitle').textContent = opts.title || 'Confirm';
+    $('#modalBody').innerHTML = opts.body || '';
+    const ok = $('#modalOk');
+    ok.textContent = opts.okText || 'OK';
+    ok.className = 'btn ' + (opts.danger ? 'danger' : 'primary');
+    this._onOk = opts.onOk || null;
+    $('#modalOverlay').classList.remove('hidden');
+    ok.focus();
+  },
+  hide() { $('#modalOverlay').classList.add('hidden'); this._onOk = null; },
+  ok() { const f = this._onOk; this.hide(); if (f) f(); }
+};
+
+/* ---- Pre-start confirmation summary ---- */
+function confirmStart() {
+  const s = Sequencer.durationsSec();
+  const total = s.reduce((a, b) => a + b, 0);
+  const modeLine = App.mode === 'sim'
+    ? `Simulator mode · time scale ×${settings.timeScale} (full cycle ≈ ${(total / (+settings.timeScale || 1)).toFixed(0)} s wall time)`
+    : `Real time · units: ${settings.unitReal === 'h' ? 'hours' : 'minutes'}`;
+  /* repeat plan preview, mirroring Sequencer.start() */
+  const loop = !!settings.seq.loop;
+  const n = Math.max(1, Math.round(+settings.seq.cycles || 1));
+  const repLine = loop
+    ? `<b>Continuous loop</b> — after Idle the sequence restarts at Feeding and keeps repeating until you press <b>Stop</b> / <b>Pause</b> (or E-STOP).`
+    : (n > 1
+        ? `<b>${n} cycles</b> — repeats automatically, then stops (≈ ${fmtHMS(total * n)} total).`
+        : `<b>Single cycle</b> — stops automatically after Idle.`);
+  const rows = PHASES.map((p, i) =>
+    `<tr><td style="color:${PHASE_META[p].color};font-weight:600">${PHASE_META[p].label}</td><td class="mono">${fmtHMS(s[i])}</td></tr>`).join('');
+  Modal.show({
+    title: 'Start cycle?',
+    body: `<p class="mut small">${modeLine}</p>
+           <table class="modal-t">${rows}
+             <tr><td><b>Per cycle</b></td><td class="mono"><b>${fmtHMS(total)}</b></td></tr></table>
+           <p class="small" style="margin:8px 0 2px">${repLine}</p>
+           <p class="mut small">Sequence: Feeding → Aeration → Settling → Withdrawal → Idle, with automatic
+           phase transitions. The <b>EMERGENCY STOP</b> button halts everything instantly.</p>`,
+    okText: 'Start cycle',
+    onOk: () => Sequencer.start()
+  });
+}
+/* ==========================================================================
+   SECTION 10 · EVENT BINDINGS + BOOTSTRAP
+   ========================================================================== */
+
+/* push the settings tree into every [data-setting] input (called once at
+   boot, before first paint — runtime changes flow back via the binder) */
+function applySettingsToDOM() {
+  $$('[data-setting]').forEach(el => {
+    const v = getPath(settings, el.dataset.setting);
+    if (v === undefined) return;
+    if (el.type === 'checkbox') el.checked = !!v;
+    else el.value = v;
   });
 }
 
-// === SLIDER HANDLING ===
-function updateFromSlider(key) {
-  state.manualMode = true;
-  const val = parseFloat(document.getElementById(`slider-${key}`).value);
-  state.sensors[key].val = val;
-  const unit = key === 'pH' ? '' : (key === 'T' ? '°' : '%');
-  document.getElementById(`val-${key}-slider`).textContent = 
-    val.toFixed(key === 'T' ? 1 : (key === 'pH' ? 1 : 0)) + unit;
-  updateDisplay();
-  drawGauge();
-  drawGraph();
+/* generic two-way binding for [data-setting] elements → settings tree */
+function bindSettings() {
+  $$('[data-setting]').forEach(el => {
+    const path = el.dataset.setting;
+    const ev = (el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input';
+    el.addEventListener(ev, () => {
+      let v;
+      if (el.type === 'checkbox') v = el.checked;
+      else if (el.type === 'number') { v = parseFloat(el.value); if (!Number.isFinite(v)) return; }
+      else v = el.value;
+      setPath(settings, path, v);
+      saveSettings();
+      onSettingChanged(path, el);
+    });
+    /* normalize number inputs on blur (clamp to min/max, repair empty) */
+    el.addEventListener('change', () => {
+      if (el.type !== 'number') return;
+      let v = parseFloat(el.value);
+      const dflt = getPath(DEFAULTS, path);
+      if (!Number.isFinite(v)) v = Number.isFinite(dflt) ? dflt : 0;
+      if (el.min !== '') v = Math.max(+el.min, v);
+      if (el.max !== '') v = Math.min(+el.max, v);
+      el.value = v;
+      setPath(settings, el.dataset.setting, v);
+      saveSettings();
+      onSettingChanged(el.dataset.setting, el);
+    });
+  });
 }
-function enableAutoSim() { state.manualMode = false; }
 
-// === CYCLE CONTROL ===
-function startCycle() {
-  if (!state.running) {
-    state.running = true; state.paused = false;
-    if (!state.cycleStartTime) resetData();
-    state.cycleStartTime = Date.now(); runPhase();
-  } else if (state.paused) {
-    state.paused = false;
-    state.phaseStartTime = Date.now() - (state.phaseDurationMs - (state.phaseRemaining * 1000));
-    runPhase();
-  }
+function onSettingChanged(path) {
+  if (path.startsWith('gauges.')) {
+    if (path.endsWith('.label')) {
+      for (const k of SKEYS) $('#cht_' + k).textContent = settings.gauges[k].label;
+    }
+    Charts.refresh();
+    Gauges.draw();
+  } else if (path === 'unitReal') {
+    UI.refreshModeUI();
+  } else if (path.startsWith('ctrl.acid.') || path.startsWith('ctrl.base.')) {
+    phSanity();
+  } else if (path === 'minOff') { /* banner text refreshes on next text() tick */ }
 }
-function pauseCycle() { 
-  state.paused = true;
-  if (state.phaseStartTime) {
-    const elapsed = Date.now() - state.phaseStartTime;
-    state.phaseRemaining = Math.max(0, (state.phaseDurationMs / 1000) - (elapsed / 1000));
-  }
-  document.getElementById('currentPhase').textContent = '⏸ PAUSED';
-  document.getElementById('runLight').className = 'light yellow';
+
+/* warn when acid/base setpoints are inverted (both pumps would fight) */
+function phSanity() {
+  const bad = settings.ctrl.acid.sp <= settings.ctrl.base.sp;
+  $('#phWarn').classList.toggle('hidden', !bad);
+  if (bad) UI.serialMonitor('sys', 'WARNING: acid SP <= base SP — pumps will fight; fix setpoints');
 }
-function resetCycle() {
-  state.running = false; state.paused = false; state.phaseIndex = 0;
-  state.cycleStartTime = null; state.phaseStartTime = null;
-  state.level = 0; state.sludgeHeight = 0; state.manualMode = false;
-  state.phaseRemaining = 0;
-  resetData(); updateTankUI(); updateDisplay(); drawGauge(); drawGraph();
-  document.getElementById('currentPhase').textContent = 'Ready — Tank Empty';
-  document.getElementById('runLight').className = 'light yellow';
-  document.querySelectorAll('#sequenceBody tr').forEach(tr => tr.classList.remove('active-sequence'));
-  document.querySelectorAll('.timer-cell').forEach(el => el.textContent = '--');
-  ['flowIn', 'flowOut'].forEach(id => document.getElementById(id).classList.remove('active'));
-  stopBubbles(); stopSludge();
+
+function bindEvents() {
+  bindSettings();
+
+  /* mode segmented toggle (locked while a cycle is active) */
+  $$('#modeSeg button').forEach(b => b.addEventListener('click', () => {
+    if (Sequencer.running()) { toast('Stop the cycle before switching mode', 'warn'); return; }
+    if (App.mode === b.dataset.mode) return;
+    App.mode = b.dataset.mode;
+    settings.mode = App.mode;
+    saveSettings();
+    Sensors.gotReal = false;
+    UI.refreshModeUI();
+    UI.onPhaseChange();
+    toast(App.mode === 'sim'
+      ? 'Simulator mode — durations in seconds, ×' + settings.timeScale + ' acceleration'
+      : 'Real mode — durations in ' + (settings.unitReal === 'h' ? 'hours' : 'minutes'), 'ok');
+  }));
+
+  /* duration inputs (bound to the active mode's set) */
+  $$('[data-dur]').forEach(el => {
+    el.addEventListener('input', () => {
+      const v = parseFloat(el.value);
+      if (Number.isFinite(v) && v > 0) {
+        (App.mode === 'sim' ? settings.durSim : settings.durReal)[el.dataset.dur] = v;
+        saveSettings();
+        UI.updateDurTotal();
+      }
+    });
+    el.addEventListener('change', () => {
+      let v = parseFloat(el.value);
+      if (!Number.isFinite(v) || v <= 0) v = App.mode === 'sim' ? 30 : 10;
+      v = clamp(v, parseFloat(el.min), parseFloat(el.max));
+      el.value = v;
+      (App.mode === 'sim' ? settings.durSim : settings.durReal)[el.dataset.dur] = v;
+      saveSettings();
+      UI.updateDurTotal();
+    });
+  });
+
+  /* sequencer controls */
+  $('#btnStart').addEventListener('click', confirmStart);   // confirm dialog first
+  $('#btnPause').addEventListener('click', () => Sequencer.state === 'PAUSED' ? Sequencer.resume() : Sequencer.pause());
+  $('#btnStop').addEventListener('click', () => Sequencer.stop());
+  $('#btnReset').addEventListener('click', () => Sequencer.reset());
+
+  /* E-STOP: instant, latched, bypasses the relay guard */
+  $('#btnEstop').addEventListener('click', () => {
+    App.estop = true;
+    Sequencer.halt();
+    for (const name of Object.keys(Outputs)) Controllers.apply(name, false, true);
+    UI.onSeqState(); UI.onPhaseChange();
+    UI.serialMonitor('sys', '*** EMERGENCY STOP — all outputs forced OFF, sequence halted ***');
+    toast('EMERGENCY STOP engaged', 'err');
+  });
+  $('#btnClearEstop').addEventListener('click', () => {
+    App.estop = false;
+    UI.onSeqState();
+    UI.serialMonitor('sys', 'E-stop cleared — controllers re-engage automatically');
+    toast('E-stop cleared', 'ok');
+  });
+
+  /* logger */
+  $('#btnLog').addEventListener('click', () => Logger.toggle());
+  $('#btnCsv').addEventListener('click', () => Logger.download());
+  $('#btnLogClear').addEventListener('click', () => { Logger.clear(); toast('Log cleared'); });
+
+  /* serial */
+  $('#btnChoosePort').addEventListener('click', async () => {
+    if (!Serial.available()) { toast('Web Serial not available in this browser', 'err'); return; }
+    try { Serial.port = await navigator.serial.requestPort(); UI.serialStatus('port'); }
+    catch (e) { /* user cancelled the chooser */ }
+  });
+  $('#btnConnect').addEventListener('click', () => {
+    if (!Serial.available()) { toast('Web Serial not available in this browser', 'err'); return; }
+    if (Serial.connected) Serial.disconnect(); else Serial.connect();
+  });
+  $('#btnMonClear').addEventListener('click', () => { $('#serialMon').innerHTML = ''; });
+  $('#serialChip').addEventListener('click', () => $('#serialPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+
+  /* modal + help */
+  $('#modalOk').addEventListener('click', () => Modal.ok());
+  $('#modalCancel').addEventListener('click', () => Modal.hide());
+  $('#modalOverlay').addEventListener('click', e => { if (e.target.id === 'modalOverlay') Modal.hide(); });
+  $('#btnHelp').addEventListener('click', () => $('#helpOverlay').classList.remove('hidden'));
+  $('#btnHelpClose').addEventListener('click', () => $('#helpOverlay').classList.add('hidden'));
+  $('#helpOverlay').addEventListener('click', e => { if (e.target.id === 'helpOverlay') $('#helpOverlay').classList.add('hidden'); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { Modal.hide(); $('#helpOverlay').classList.add('hidden'); }
+  });
+
+  /* warn before leaving with a live batch */
+  window.addEventListener('beforeunload', e => {
+    if (Sequencer.running()) { e.preventDefault(); e.returnValue = ''; }
+  });
 }
-function resetData() {
-  state.dataLog = []; 
-  state.timeHistory = [0];
-  state.sensorHistory = { T: [24], pH: [7.5], Oxy: [10], S1: [5], S2: [5] };
-  document.querySelectorAll('.sludge, .bubble').forEach(el => el.remove());
+
+/* ---- visual (rAF) loop: interpolation only, no process state ---- */
+let _lastRaf = 0;
+function rafLoop(ts) {
+  const dt = Math.min(0.1, (ts - (_lastRaf || ts - 16)) / 1000);
+  _lastRaf = ts;
+  Gauges.step(dt);
+  Gauges.draw();
+  Tank.tick(dt);
+  UI.tick(ts);
+  requestAnimationFrame(rafLoop);
 }
-function runPhase() {
-  if (!state.running || state.paused) return;
-  const phase = state.phases[state.phaseIndex];
-  
-  let duration;
-  if (state.phaseRemaining && state.phase === phase) {
-    duration = state.phaseRemaining * 1000;
-    state.phaseRemaining = 0;
+
+/* ---- boot ---- */
+function init() {
+  applyStoredMode();
+  spawnTankLife();
+  Gauges.init();
+  Charts.init();
+  bindEvents();
+  applySettingsToDOM();   // settings → inputs (no change events fired)
+  Charts.refresh();
+  phSanity();
+
+  if (!Serial.available()) {
+    $('#noSerialBanner').classList.remove('hidden');
+    $('#btnChoosePort').disabled = true;
+    $('#btnConnect').disabled = true;
+    $('#serialStatus').textContent = 'Web Serial unavailable — simulator mode still fully functional';
+    $('#serialStatus').className = 'serial-status mono err';
   } else {
-    duration = parseInt(document.getElementById(`time-${phase}`).value) * 1000;
-  }
-  
-  state.phase = phase;
-  state.phaseStartTime = Date.now();
-  state.phaseDurationMs = duration;
-  
-  document.querySelectorAll('#sequenceBody tr').forEach(tr => tr.classList.remove('active-sequence'));
-  document.getElementById(`row-${phase}`).classList.add('active-sequence');
-  document.querySelectorAll('#sequenceBody td:last-child').forEach(td => td.textContent = '—');
-  document.getElementById(`stat-${phase}`).textContent = '▶';
-  document.getElementById('currentPhase').textContent = `Phase: ${phase}`;
-  document.getElementById('runLight').className = 'light green';
-  
-  applyPhaseEffects(phase, duration);
-  
-  const phaseStart = Date.now();
-  const countdown = setInterval(() => {
-    if (!state.running || state.paused) { clearInterval(countdown); return; }
-    if (Date.now() - phaseStart >= duration) { clearInterval(countdown); endPhase(phase); }
-  }, 100);
-}
-function endPhase(p) {
-  document.getElementById(`stat-${p}`).textContent = '✓';
-  document.getElementById(`timer-${p}`).textContent = '0';
-  state.phaseIndex = (state.phaseIndex + 1) % state.phases.length;
-  setTimeout(runPhase, 500);
-}
-
-// === PHASE EFFECTS ===
-function applyPhaseEffects(phase, duration) {
-  const flowIn = document.getElementById('flowIn');
-  const flowOut = document.getElementById('flowOut');
-  const liquid = document.getElementById('liquid');
-  flowIn.classList.remove('active'); flowOut.classList.remove('active');
-  stopBubbles(); stopSludge();
-  liquid.className = 'tank-liquid';
-  
-  switch (phase) {
-    case 'FEED':
-      liquid.classList.add('liquid-feed'); flowIn.classList.add('active');
-      animateLevel(0, 92, duration);
-      document.getElementById('sonicStatus').innerHTML = '<b style="color:green">SONIC: ON</b>'; break;
-    case 'AERATION':
-      liquid.classList.add('liquid-aerate'); startBubbles();
-      animateLevel(92, 95, duration);
-      document.getElementById('sonicStatus').textContent = 'SONIC: OFF'; break;
-    case 'SETTLING':
-      liquid.classList.add('liquid-settle'); startSludge();
-      animateLevel(95, 90, duration); break;
-    case 'WITHDRAWAL':
-      liquid.classList.add('liquid-withdraw'); flowOut.classList.add('active');
-      animateLevel(90, 0, duration); break;
-    case 'IDLE':
-      liquid.classList.add('liquid-idle');
-      document.getElementById('sonicStatus').textContent = 'SONIC: OFF'; break;
-  }
-}
-function animateLevel(from, to, dur) {
-  const start = Date.now();
-  const step = () => {
-    if (!state.running || state.paused) return;
-    const p = Math.min((Date.now() - start) / dur, 1);
-    state.level = from + (to - from) * p;
-    updateTankUI(); if (p < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
-function updateTankUI() {
-  document.getElementById('liquid').style.height = state.level + '%';
-  document.getElementById('levelValue').textContent = Math.round(state.level);
-  document.getElementById('sludgeLayer').style.height = state.sludgeHeight + '%';
-}
-
-// === BUBBLES & SLUDGE ===
-function startBubbles() {
-  const c = document.getElementById('bubbleContainer');
-  state.bubbleInterval = setInterval(() => {
-    if (state.phase !== 'AERATION') { stopBubbles(); return; }
-    const b = document.createElement('div');
-    b.className = 'bubble';
-    const s = 3 + Math.random() * 7;
-    b.style.width = b.style.height = s + 'px';
-    b.style.left = (8 + Math.random() * 104) + 'px';
-    b.style.bottom = '3px';
-    b.style.animationDuration = (1.2 + Math.random() * 1.5) + 's';
-    c.appendChild(b);
-    setTimeout(() => b.remove(), 3000);
-  }, 60);
-}
-function stopBubbles() { clearInterval(state.bubbleInterval); state.bubbleInterval = null; }
-
-function startSludge() {
-  const c = document.getElementById('sludgeContainer');
-  let settled = 0;
-  state.sludgeInterval = setInterval(() => {
-    if (state.phase !== 'SETTLING') { stopSludge(); return; }
-    const p = document.createElement('div');
-    p.className = 'sludge';
-    const s = 2 + Math.random() * 5;
-    p.style.width = p.style.height = s + 'px';
-    p.style.left = (3 + Math.random() * 114) + 'px';
-    p.style.top = (5 + Math.random() * (state.level * 2 - 15)) + 'px';
-    p.style.animationDuration = (0.8 + Math.random() * 1.5) + 's';
-    c.appendChild(p);
-    setTimeout(() => p.remove(), 2500);
-    settled += 0.04;
-    state.sludgeHeight = Math.min(12, settled);
-    updateTankUI();
-  }, 80);
-}
-function stopSludge() { clearInterval(state.sludgeInterval); state.sludgeInterval = null; }
-
-// === MAIN SIMULATION — GRAPH DATA NOW INDEPENDENT OF LOGGING ===
-function simulateSensors() {
-  const t = Date.now();
-  const elapsed = state.cycleStartTime ? (t - state.cycleStartTime) / 1000 : 0;
-  const phaseTime = state.phaseStartTime ? (t - state.phaseStartTime) / 1000 : 0;
-  const pt = phaseTime;
-
-  if (!state.manualMode) {
-    switch (state.phase) {
-      case 'FEED':
-        state.sensors.T.val = 22 + 3 * Math.sin(pt * 0.15);
-        state.sensors.pH.val = 7.0 - 1.5 * (1 - Math.exp(-pt/4)) + 0.5 * Math.sin(pt * 0.3);
-        state.sensors.Oxy.val = 2 + 3 * Math.exp(-pt/5);
-        state.sensors.S1.val = 10 + 40 * (1 - Math.exp(-pt/6));
-        state.sensors.S2.val = 15 + 25 * (1 - Math.exp(-pt/5)); break;
-      case 'AERATION':
-        state.sensors.T.val = 23 + 2 * Math.sin(pt * 0.5);
-        state.sensors.pH.val = 5.5 + 2.5 * (1 - Math.exp(-pt/2)) + 0.3 * Math.sin(pt * 1.2);
-        state.sensors.Oxy.val = 5 + 85 * (1 - Math.exp(-pt/1.5));
-        state.sensors.S1.val = 50 + 15 * Math.sin(pt * 1.5);
-        state.sensors.S2.val = 40 * Math.exp(-pt/3); break;
-      case 'SETTLING':
-        state.sensors.T.val = 24 + 1 * Math.sin(pt * 0.3);
-        state.sensors.pH.val = 7.8 + 0.4 * Math.sin(pt * 0.5);
-        state.sensors.Oxy.val = 90 * Math.exp(-pt/4) + 5;
-        state.sensors.S1.val = 65 * Math.exp(-pt/3) + 5;
-        state.sensors.S2.val = 10 + 5 * Math.sin(pt * 0.4); break;
-      case 'WITHDRAWAL':
-        state.sensors.T.val = 24 + 0.5 * Math.sin(pt * 0.8);
-        state.sensors.pH.val = 7.6 + 0.3 * Math.sin(pt * 0.6);
-        state.sensors.Oxy.val = 15 + 5 * Math.sin(pt * 1.0);
-        state.sensors.S1.val = 8 + 3 * Math.sin(pt * 0.7);
-        state.sensors.S2.val = 8 + 2 * Math.sin(pt * 0.5); break;
-      default:
-        state.sensors.T.val = 24; state.sensors.pH.val = 7.5;
-        state.sensors.Oxy.val = 10; state.sensors.S1.val = 5; state.sensors.S2.val = 5;
-    }
-    
-    ['T', 'pH', 'Oxy', 'S1', 'S2'].forEach(k => {
-      const v = state.sensors[k].val;
-      document.getElementById(`slider-${k}`).value = v;
-      const u = k === 'pH' ? '' : (k === 'T' ? '°' : '%');
-      document.getElementById(`val-${k}-slider`).textContent = 
-        v.toFixed(k === 'T' ? 1 : (k === 'pH' ? 1 : 0)) + u;
-    });
+    UI.serialStatus('disconnected');
   }
 
-  state.sensors.T.val = Math.max(0, Math.min(100, state.sensors.T.val));
-  state.sensors.pH.val = Math.max(0, Math.min(14, state.sensors.pH.val));
-  state.sensors.Oxy.val = Math.max(0, Math.min(100, state.sensors.Oxy.val));
-  state.sensors.S1.val = Math.max(0, Math.min(100, state.sensors.S1.val));
-  state.sensors.S2.val = Math.max(0, Math.min(100, state.sensors.S2.val));
+  UI.refreshModeUI();
+  UI.onSeqState();
+  UI.onPhaseChange();
+  UI.refreshActuators();
+  UI.logPreview();
+  UI.serialMonitor('sys', `dashboard ready — mode: ${App.mode === 'sim' ? 'SIMULATOR (×' + settings.timeScale + ')' : 'REAL'} · settings restored from localStorage`);
+  UI.text();
 
-  // Controllers
-  const acidOn = state.sensors.pH.val > 9.5;
-  const baseOn = state.sensors.pH.val < 5.5;
-  const heatOn = state.sensors.T.val < 10;
-  const heatOff = state.sensors.T.val > 35;
-  document.getElementById('acidStatus').innerHTML =
-    acidOn ? '<b style="color:red">ACID:ON</b>' : 'ACID:OFF';
-  document.getElementById('baseStatus').innerHTML =
-    baseOn ? '<b style="color:green">BASE:ON</b>' : 'BASE:OFF';
-  document.getElementById('heaterStatus').innerHTML =
-    heatOn ? '<b style="color:red">HEAT:ON</b>' : heatOff ? '<b style="color:orange">HEAT:OFF</b>' : 'HEAT:OFF';
-
-  // === GRAPH DATA — ALWAYS COLLECTED, INDEPENDENT OF LOGGING ===
-  if (state.running) {
-    state.timeHistory.push(elapsed);
-    ['T', 'pH', 'Oxy', 'S1', 'S2'].forEach(k => state.sensorHistory[k].push(state.sensors[k].val));
-    if (state.timeHistory.length > 300) {
-      state.timeHistory.shift();
-      Object.keys(state.sensorHistory).forEach(k => state.sensorHistory[k].shift());
-    }
-  }
-
-  // === FILE LOGGING — SEPARATE, ONLY WHEN LOG=ON ===
-  state.logFrequency = parseInt(document.getElementById('logFreq').value) || 1;
-  if (state.logEnabled && elapsed - state.lastLogTime >= state.logFrequency) {
-    state.lastLogTime = elapsed;
-    state.dataLog.push({
-      time: elapsed.toFixed(2), phase: state.phase,
-      T: state.sensors.T.val.toFixed(2), pH: state.sensors.pH.val.toFixed(3),
-      Oxy: state.sensors.Oxy.val.toFixed(1), S1: state.sensors.S1.val.toFixed(1),
-      S2: state.sensors.S2.val.toFixed(1), level: state.level.toFixed(1),
-      sludge: state.sludgeHeight.toFixed(2), manual: state.manualMode ? 'Y' : 'N'
-    });
-  }
-
-  // Update everything
-  updateTimerDisplay();
-  updateDisplay();
-  drawGauge();
-  drawGraph();
-  
-  requestAnimationFrame(simulateSensors);
+  Clock.start();                       // single source of process time
+  requestAnimationFrame(rafLoop);      // cosmetics only
 }
 
-function toggleLogging() {
-  state.logEnabled = !state.logEnabled;
-  document.getElementById('logToggle').classList.toggle('on', state.logEnabled);
-}
-function downloadData() {
-  if (!state.dataLog.length) return alert('Enable Log first, then start cycle to collect data!');
-  const h = 'Time,Phase,T,pH,O2,S1,S2,Level,Sludge,Manual\n';
-  const r = state.dataLog.map(p =>
-    `${p.time},${p.phase},${p.T},${p.pH},${p.Oxy},${p.S1},${p.S2},${p.level},${p.sludge},${p.manual}`
-  ).join('\n');
-  const b = new Blob([h + r], { type: 'text/csv' });
-  const u = URL.createObjectURL(b);
-  const a = document.createElement('a');
-  a.href = u; a.download = `SBR_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
-  a.click(); URL.revokeObjectURL(u);
+function applyStoredMode() {
+  /* restore last used mode/time-scale visuals before first paint of values */
+  App.mode = settings.mode === 'real' ? 'real' : 'sim';
 }
 
-// === INITIALIZE ===
-updateDisplay();
-drawGauge();
-drawGraph();
-simulateSensors();
+window.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
